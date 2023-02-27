@@ -157,9 +157,9 @@ class MeasurementGetQueryConfig(BaseModel):
 class DataLakeMeasureEndpoint(APIEndpoint):
     """Implementation of the DataLakeMeasure endpoint.
 
-    This endpoint provides an interfact to all data stored in the StreamPipes data lake.
+    This endpoint provides an interface to all data stored in the StreamPipes data lake.
 
-    Consequently, it allows uerying metadata about available data sets (see `all()` method).
+    Consequently, it allows querying metadata about available data sets (see `all()` method).
     The metadata is returned as an instance of `model.container.DataLakeMeasures`.
 
     In addition, the endpoint provides direct access to the data stored in the data laka by querying a
