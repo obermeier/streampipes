@@ -110,6 +110,35 @@ class StreamPipesClient:
         self.dataStreamApi = DataStreamEndpoint(parent_client=self)
         self.versionApi = VersionEndpoint(parent_client=self)
 
+        self.server_version = self._get_server_version()
+
+    def _get_server_version(self) -> str:
+        """Connects to the StreamPipes server and retrieves its version.
+
+        In addition to querying the server version, this method implicitly checks the specified credentials.
+
+        Returns
+        -------
+        sp_version: str
+            version of the connected StreamPipes instance
+
+        """
+
+        # retrieve metadata from the API via the Streampipes server
+        # as a side effect, the specified credentials are also tested to ensure that authentication is successful.
+        version_dict = self.versionApi.get(identifier="").to_dict(use_source_names=False)
+
+        # remove SNAPSHOT-suffix if present
+        sp_version = version_dict["backend_version"].replace("-SNAPSHOT", "")
+
+        logger.info(
+            "The StreamPipes version was successfully retrieved from the backend: %s. "
+            "By means of that, authentication via the provided credentials is also tested successfully.",
+            sp_version,
+        )
+
+        return sp_version
+
     @staticmethod
     def _set_up_logging(logging_level: int) -> None:
         """Configures the logging behavior of the `StreamPipesClient`.
