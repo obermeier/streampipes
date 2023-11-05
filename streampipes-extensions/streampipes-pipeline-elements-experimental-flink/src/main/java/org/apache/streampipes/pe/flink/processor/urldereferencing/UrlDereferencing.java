@@ -48,7 +48,7 @@ public class UrlDereferencing implements FlatMapFunction<Event, Event> {
 
       in.addField(appendHtml, body);
     } catch (Exception e) {
-      logger.error("Error while fetching data from URL: " + urlString);
+      //logger.error("Error while fetching data from URL: " + urlString);
       in.addField(appendHtml, "Error while fetching data from URL: " + urlString);
     }
 

@@ -48,11 +48,12 @@
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-cep_2.11</artifactId>
+            <artifactId>flink-cep</artifactId>
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-runtime_2.11</artifactId>
+            <artifactId>flink-runtime</artifactId>
+            <version>${flink.version}</version>
         </dependency>
         <dependency>
             <groupId>org.scala-lang</groupId>
@@ -73,12 +74,22 @@
         <dependency>
             <groupId>org.elasticsearch</groupId>
             <artifactId>elasticsearch</artifactId>
+            <exclusions>
+				<exclusion>
+				    <groupId>org.hdrhistogram</groupId>
+				    <artifactId>HdrHistogram</artifactId>
+				</exclusion>
+			</exclusions>
         </dependency>
         <dependency>
             <groupId>xerces</groupId>
             <artifactId>xercesImpl</artifactId>
         </dependency>
-
+<!--<dependency>-->
+<!--    <groupId>org.openjax.xml</groupId>-->
+<!--    <artifactId>sax</artifactId>-->
+<!--    <version>0.9.5</version>-->
+<!--</dependency>-->
         <!-- 3rd party dependencies to avoid convergence errors -->
         <dependency>
             <groupId>io.dropwizard.metrics</groupId>
@@ -91,6 +102,11 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-checkstyle-plugin</artifactId>
+                <configuration>
+                    <propertyExpansion>
+                		checkstyle.config.base.path=${project.parent.basedir}/tools/maven
+                	</propertyExpansion>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
