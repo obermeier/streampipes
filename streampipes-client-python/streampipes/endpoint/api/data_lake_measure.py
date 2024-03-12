@@ -41,7 +41,7 @@ class StreamPipesQueryValidationError(Exception):
     """
 
 
-class MeasurementGetQueryConfig(pydantic.v1.utils.BaseModel):
+class MeasurementGetQueryConfig(BaseModel):
     """Config class describing the parameters of the `get()` method for measurements.
 
     This config class is used to validate the provided query parameters for the GET endpoint of measurements.
@@ -81,7 +81,7 @@ class MeasurementGetQueryConfig(pydantic.v1.utils.BaseModel):
         extra = Extra.forbid
         allow_population_by_field_name = True
 
-    columns: Optional[str] = Field(patern=_regex_comma_separated_string)
+    columns: Optional[str] = Field(regex=_regex_comma_separated_string)
     end_date: Optional[StrictInt] = Field(alias="endDate")
     limit: Optional[int] = Field(ge=1, default=1000)
     offset: Optional[int] = Field(ge=0)
