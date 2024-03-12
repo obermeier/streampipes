@@ -102,7 +102,7 @@ public class InfluxDbSink extends StreamPipesDataSink {
     builder.requiredStream(StreamRequirementsBuilder.create().requiredPropertyWithUnaryMapping(
             EpRequirements.timestampReq(),
             Labels.withId(TIMESTAMP_MAPPING_KEY),
-            PropertyScope.NONE).build())
+            PropertyScope.).build())
         .requiredIntegerParameter(Labels.withId(BATCH_INTERVAL_ACTIONS_KEY))
         .requiredIntegerParameter(Labels.withId(MAX_FLUSH_DURATION_KEY), 2000);
 

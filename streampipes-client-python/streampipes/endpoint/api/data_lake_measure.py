@@ -22,7 +22,8 @@ This endpoint allows to consume data stored in StreamPipes' data lake.
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type
 
-from pydantic import BaseModel, Extra, Field, StrictInt, ValidationError, validator
+from pydantic.v1 import Extra, Field, StrictInt, ValidationError, validator
+from pydantic.v1 import BaseModel
 
 from streampipes.endpoint.endpoint import APIEndpoint
 from streampipes.model.container import DataLakeMeasures
@@ -40,7 +41,7 @@ class StreamPipesQueryValidationError(Exception):
     """
 
 
-class MeasurementGetQueryConfig(BaseModel):
+class MeasurementGetQueryConfig(pydantic.v1.utils.BaseModel):
     """Config class describing the parameters of the `get()` method for measurements.
 
     This config class is used to validate the provided query parameters for the GET endpoint of measurements.

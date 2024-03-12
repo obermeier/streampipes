@@ -61,17 +61,6 @@ services:
     networks:
       spnet:
 
-  pipeline-elements-experimental-flink:
-    build:
-      context: ./streampipes-pipeline-elements-experimental-flink
-      dockerfile: Dockerfile
-      args:
-        BASE_IMAGE: adoptopenjdk/openjdk8-openj9:alpine
-    image: streampipes_pipeline-elements-experimental-flink:release-validation
-    logging: *default-logging
-    networks:
-      spnet:
-
 volumes:
   files:
 
