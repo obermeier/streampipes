@@ -40,20 +40,20 @@ import org.apache.streampipes.wrapper.standalone.StreamPipesNotificationSink;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.http.Header;
 import org.apache.http.HttpHost;
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.ContentType;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
-import org.apache.http.impl.client.HttpClients;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.time.Duration;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Map;
 
 public class MSTeamsSink extends StreamPipesNotificationSink {
@@ -72,21 +72,25 @@ public class MSTeamsSink extends StreamPipesNotificationSink {
   public static final String KEY_PROXY_GROUP = "proxyConfigurationGroup";
   public static final String KEY_PROXY_URL = "proxyUrl";
   protected static final String SIMPLE_MESSAGE_TEMPLATE = "{\"text\": \"%s\"}";
-  private static final int MAX_RETRIES = 5;
-  private static final int HTTP_TOO_MANY_REQUESTS = 429;
-  private static final Duration BASE_BACKOFF = Duration.ofSeconds(1);
+
+  private static final int MAX_ATTEMPTS = 3;
+  private static final long RETRY_DELAY_MS = 2000;
+  private static final int CONNECT_TIMEOUT_MS = 5_000;
+  private static final int SOCKET_TIMEOUT_MS = 10_000;
+  private static final int CONNECTION_REQUEST_TIMEOUT_MS = 5_000;
+
+  private static final Logger LOG = LoggerFactory.getLogger(MSTeamsSink.class);
 
   private String messageContent;
   private boolean isSimpleMessageMode;
-  private String webhookUrl;
+  private URI webhookUrl;
   private ObjectMapper objectMapper;
   private CloseableHttpClient httpClient;
 
   public MSTeamsSink() {
     super();
-    this.objectMapper = JacksonSerializer.getObjectMapper(Map.of(
-      DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true
-    ));
+    this.objectMapper = JacksonSerializer
+        .getObjectMapper(Map.of(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true));
   }
 
   @Override
@@ -94,27 +98,18 @@ public class MSTeamsSink extends StreamPipesNotificationSink {
     var builder = declareModelWithoutSilentPeriod();
     addSilentPeriodParameter(builder);
 
-    return DataSinkConfiguration.create(
-        MSTeamsSink::new,
-        builder.build()
-    );
+    return DataSinkConfiguration.create(MSTeamsSink::new, builder.build());
   }
 
   @Override
-  public void onPipelineStarted(
-      IDataSinkParameters parameters,
-      EventSinkRuntimeContext runtimeContext
-  ) {
+  public void onPipelineStarted(IDataSinkParameters parameters, EventSinkRuntimeContext runtimeContext) {
     super.onPipelineStarted(parameters, runtimeContext);
 
-    this.objectMapper = JacksonSerializer.getObjectMapper(Map.of(
-      DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true
-    ));
+    this.objectMapper = JacksonSerializer
+        .getObjectMapper(Map.of(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true));
 
     var extractor = parameters.extractor();
-    webhookUrl = extractor.secretValue(KEY_WEBHOOK_URL);
-
-    validateWebhookUrl(webhookUrl);
+    webhookUrl = validateWebhookUrl(extractor.secretValue(KEY_WEBHOOK_URL));
 
     var selectedAlternative = extractor.selectedAlternativeInternalId(KEY_MESSAGE_TYPE_ALTERNATIVES);
     if (selectedAlternative.equals(KEY_MESSAGE_ADVANCED)) {
@@ -126,22 +121,35 @@ public class MSTeamsSink extends StreamPipesNotificationSink {
     }
 
     var selectedProxyAlternative = extractor.selectedAlternativeInternalId(KEY_PROXY_ALTERNATIVES);
+    var requestConfig = RequestConfig.custom()
+        .setConnectTimeout(CONNECT_TIMEOUT_MS)
+        .setSocketTimeout(SOCKET_TIMEOUT_MS)
+        .setConnectionRequestTimeout(CONNECTION_REQUEST_TIMEOUT_MS)
+        .build();
+
     if (selectedProxyAlternative.equals(KEY_PROXY_DISABLED)) {
-      this.httpClient = HttpClients.createDefault();
+      this.httpClient = HttpClientBuilder.create()
+          .setDefaultRequestConfig(requestConfig)
+          .build();
+      LOG.info("MS Teams sink initialized (no proxy), webhook host={}",
+          webhookUrl.getHost());
     } else {
       var proxyUrl = extractor.singleValueParameter(KEY_PROXY_URL, String.class);
-      this.httpClient = HttpClientBuilder
-          .create()
+      this.httpClient = HttpClientBuilder.create()
+          .setDefaultRequestConfig(requestConfig)
           .setProxy(HttpHost.create(proxyUrl))
           .build();
+      LOG.info("MS Teams sink initialized via proxy {}", proxyUrl);
     }
   }
 
   @Override
   public void onNotificationEvent(Event event) {
 
-    // This sink allows to use placeholders for event properties when defining the message content in the UI
-    // Therefore, we need to replace these placeholders based on the actual event before actually sending the message
+    // This sink allows to use placeholders for event properties when defining the
+    // message content in the UI
+    // Therefore, we need to replace these placeholders based on the actual event
+    // before actually sending the message
     var processedMessageContent = PlaceholderExtractor.replacePlaceholders(event, messageContent);
 
     String teamsMessageContent;
@@ -155,170 +163,188 @@ public class MSTeamsSink extends StreamPipesNotificationSink {
 
   @Override
   public DataSinkBuilder declareModelWithoutSilentPeriod() {
-    return DataSinkBuilder
-        .create(ID, 1)
-        .withLocales(Locales.EN)
+    return DataSinkBuilder.create(ID, 1).withLocales(Locales.EN)
         .withAssets(ExtensionAssetType.DOCUMENTATION, ExtensionAssetType.ICON)
         .category(DataSinkType.NOTIFICATION)
         .requiredStream(
-            StreamRequirementsBuilder
-                .create()
-                .requiredProperty(EpRequirements.anyProperty())
-                .build()
-        )
+            StreamRequirementsBuilder.create().requiredProperty(EpRequirements.anyProperty()).build())
         .requiredSecret(Labels.withId(KEY_WEBHOOK_URL))
-        .requiredAlternatives(
-            Labels.withId(KEY_PROXY_ALTERNATIVES),
+        .requiredAlternatives(Labels.withId(KEY_PROXY_ALTERNATIVES),
             Alternatives.from(Labels.withId(KEY_PROXY_DISABLED)),
             Alternatives.from(Labels.withId(KEY_PROXY_ENABLED),
                 StaticProperties.group(Labels.withId(KEY_PROXY_GROUP),
-                    StaticProperties.stringFreeTextProperty(Labels.withId(KEY_PROXY_URL))
-                )
-            ))
-        .requiredAlternatives(
-            Labels.withId(KEY_MESSAGE_TYPE_ALTERNATIVES),
-            Alternatives.from(
-                Labels.withId(KEY_MESSAGE_SIMPLE),
-                StaticProperties.stringFreeTextProperty(
-                    Labels.withId(KEY_MESSAGE_SIMPLE_CONTENT),
-                    true,
-                    true
-                ),
-                true
-            ),
-            Alternatives.from(
-                Labels.withId(KEY_MESSAGE_ADVANCED),
-                StaticProperties.stringFreeTextProperty(
-                    Labels.withId(KEY_MESSAGE_ADVANCED_CONTENT),
-                    true,
-                    true
-                )
-            )
-        );
+                    StaticProperties.stringFreeTextProperty(Labels.withId(KEY_PROXY_URL)))))
+        .requiredAlternatives(Labels.withId(KEY_MESSAGE_TYPE_ALTERNATIVES),
+            Alternatives.from(Labels.withId(KEY_MESSAGE_SIMPLE),
+                StaticProperties.stringFreeTextProperty(Labels.withId(KEY_MESSAGE_SIMPLE_CONTENT), true,
+                    true),
+                true),
+            Alternatives.from(Labels.withId(KEY_MESSAGE_ADVANCED), StaticProperties
+                .stringFreeTextProperty(Labels.withId(KEY_MESSAGE_ADVANCED_CONTENT), true, true)));
   }
 
   @Override
   public void onPipelineStopped() {
-    try {
-        this.httpClient.close();
-    } catch (IOException e) {
-        throw new SpRuntimeException("Error when closing MSTeams client: %s".formatted(e.getMessage()));
+    if (httpClient != null) {
+      try {
+        httpClient.close();
+        LOG.info("MS Teams sink stopped, HTTP client closed");
+      } catch (IOException e) {
+        LOG.warn("Error closing MS Teams HTTP client: {}", e.getMessage());
+      }
     }
-   }
+  }
 
   /**
-   * Creates a JSON string intended for the MS Teams Webhook URL based on the provided plain message content.
+   * Creates a JSON string intended for the MS Teams Webhook URL based on the
+   * provided plain message content.
    * <p>
-   * This method utilizes a basic approach for constructing messages to be sent to MS Teams.
-   * If you intend to provide text in the form of Adaptive Cards, consider using
-   * {@link #createMessageFromAdvancedContent(String)} for a more advanced and interactive message format.
+   * This method utilizes a basic approach for constructing messages to be sent to
+   * MS Teams. If you intend to provide text in the form of Adaptive Cards,
+   * consider using {@link #createMessageFromAdvancedContent(String)} for a more
+   * advanced and interactive message format.
    * </p>
    *
-   * @param messageContent The plain message content to be included in the Teams message.
-   * @return A JSON string formatted using a predefined template with the provided message content.
+   * @param messageContent The plain message content to be included in the Teams
+   *                       message.
+   * @return A JSON string formatted using a predefined template with the provided
+   *         message content.
    */
   protected String createMessageFromSimpleContent(String messageContent) {
     return SIMPLE_MESSAGE_TEMPLATE.formatted(messageContent);
   }
 
   /**
-   * Creates a message for MS Teams from a JSON string, specifically designed for use with Adaptive Cards.
+   * Creates a message for MS Teams from a JSON string, specifically designed for
+   * use with Adaptive Cards.
    * <p>
-   * This method takes a JSON string as input, which is expected to represent the content of the message.
-   * The content is directly forwarded to MS Teams, allowing for the utilization of Adaptive Cards.
-   * Adaptive Cards provide a flexible and interactive way to present content in Microsoft Teams.
-   * Learn more about Adaptive Cards: <a href="https://learn.microsoft.com/en-us/adaptive-cards/">here</a>
+   * This method takes a JSON string as input, which is expected to represent the
+   * content of the message. The content is directly forwarded to MS Teams,
+   * allowing for the utilization of Adaptive Cards. Adaptive Cards provide a
+   * flexible and interactive way to present content in Microsoft Teams. Learn
+   * more about Adaptive Cards:
+   * <a href="https://learn.microsoft.com/en-us/adaptive-cards/">here</a>
    * </p>
    *
-   * @param messageContent The JSON string representing the content of the message.
+   * @param messageContent The JSON string representing the content of the
+   *                       message.
    * @return The original JSON string, unchanged.
-   * @throws SpRuntimeException If the provided message is not a valid JSON string.
+   * @throws SpRuntimeException If the provided message is not a valid JSON
+   *                            string.
    */
   protected String createMessageFromAdvancedContent(String messageContent) {
     try {
       objectMapper.readValue(messageContent, Object.class);
     } catch (JsonProcessingException e) {
       throw new SpRuntimeException(
-          "Advanced message content provided is not a valid JSON string: %s".formatted(messageContent),
-          e
-      );
+          "Advanced message content provided is not a valid JSON string: %s".formatted(messageContent), e);
     }
     return messageContent;
   }
 
   /**
-   * Sends a payload to a webhook using the provided HTTP client, payload, and webhook URL.
+   * Sends a payload to the configured MS Teams webhook, retrying transient
+   * failures with a fixed delay.
+   * <p>
+   * A request is retried up to {@value #MAX_ATTEMPTS} times (waiting
+   * {@value #RETRY_DELAY_MS} ms between attempts) when the call fails with an
+   * I/O error or the webhook responds with HTTP 429 or a 5xx status. A 4xx
+   * status other than 429 is treated as permanent (e.g. an invalid webhook,
+   * revoked token, or malformed card) and fails immediately without retrying.
+   * </p>
+   * <p>
+   * If the calling thread is interrupted (for example because the pipeline is
+   * being stopped), the method restores the interrupt flag and returns quietly
+   * without throwing, since an aborted send during shutdown is not a failure.
+   * </p>
    *
-   * @param mockedClient The HTTP client used to send the payload.
-   * @param payload    The payload to be sent to the webhook.
-   * @param webhookUrl The URL of the webhook to which the payload will be sent.
-   * @throws SpRuntimeException If an I/O error occurs while sending the payload to the webhook or
-   *                            the payload sent is not accepted by the API.
+   * @param client  The HTTP client used to send the payload.
+   * @param payload The payload to be sent to the webhook.
+   * @param url     The URL of the webhook to which the payload will be sent.
+   * @throws SpRuntimeException If the webhook rejects the message with a
+   *                            permanent (non-429 4xx) status, or if all retry
+   *                            attempts are exhausted without success.
    */
-  protected void sendPayloadToWebhook(CloseableHttpClient mockedClient, String payload, String webhookUrl) {
+   void sendPayloadToWebhook(CloseableHttpClient client, String payload, URI url) {
+    var post = new HttpPost(url);
+    post.setEntity(new StringEntity(payload, ContentType.APPLICATION_JSON));
 
-    for (int attempt = 1; ; attempt++) {
-      HttpPost request = new HttpPost(webhookUrl);
-      request.setEntity(new StringEntity(payload, ContentType.APPLICATION_JSON));
+    SpRuntimeException last = null;
 
-      if (Thread.currentThread().isInterrupted()) {
-        throw new SpRuntimeException("Interrupted while sending MS Teams webhook");
-      }
+    for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      LOG.debug("Sending notification to MS Teams (attempt {}/{})", attempt, MAX_ATTEMPTS);
 
-      try (CloseableHttpResponse response = mockedClient.execute(request)) {
+      try (CloseableHttpResponse response = client.execute(post)) {
         int status = response.getStatusLine().getStatusCode();
+
         if (status >= 200 && status < 300) {
+          if (attempt > 1) {
+            LOG.info("MS Teams notification succeeded on attempt {}/{}", attempt, MAX_ATTEMPTS);
+          } else {
+            LOG.debug("MS Teams notification sent (HTTP {})", status);
+          }
           return;
         }
 
-        if (status != HTTP_TOO_MANY_REQUESTS && (status < 500 || status >= 600)) {
-          throw new SpRuntimeException("MS Teams webhook rejected request (status=%d)".formatted(status));
+        if (status >= 400 && status < 500 && status != 429) {
+          // client error: retrying won't help (bad webhook, revoked token, malformed card)
+          LOG.error("MS Teams rejected the message with HTTP {} - not retrying", status);
+          throw new SpRuntimeException("Teams rejected the message: HTTP " + status);
         }
 
-        if (attempt > MAX_RETRIES) {
-          throw new SpRuntimeException("MS Teams webhook failed after %d attempts (status=%d)"
-            .formatted(attempt - 1, status));
+        // 5xx or 429 -> transient, worth retrying
+        LOG.warn("MS Teams returned HTTP {} (attempt {}/{})", status, attempt, MAX_ATTEMPTS);
+        last = new SpRuntimeException("Teams returned HTTP " + status);
+
+      } catch (IOException e) {
+        if (Thread.currentThread().isInterrupted()) {
+          LOG.debug("MS Teams request aborted because the pipeline is stopping - ignoring");
+          return; // clean shutdown, not a failure
         }
+        LOG.warn("MS Teams request failed (attempt {}/{}): {}", attempt, MAX_ATTEMPTS, e.getMessage());
+        last = new SpRuntimeException("Sending notification to MS Teams failed.", e);
+      }
 
-        long backoffMs = BASE_BACKOFF.toMillis() << Math.min(attempt, 6);
-
-        Header retryAfter = response.getFirstHeader("Retry-After");
-        if (retryAfter != null) {
+      if (attempt < MAX_ATTEMPTS) {
+        LOG.info("Retrying MS Teams notification in {} ms", RETRY_DELAY_MS);
         try {
-            backoffMs = Long.parseLong(retryAfter.getValue()) * 1000;
-          } catch (NumberFormatException ignored) {}
-        }
-
-        Thread.sleep(backoffMs);
-      } catch (IOException | InterruptedException e) {
-        if (attempt > MAX_RETRIES) {
-          throw new SpRuntimeException("I/O error sending MS Teams webhook", e);
-        }
-
-        try {
-          Thread.sleep(BASE_BACKOFF.toMillis() << Math.min(attempt, 6));
-        } catch (InterruptedException ie) {
+          Thread.sleep(RETRY_DELAY_MS);
+        } catch (InterruptedException e) {
           Thread.currentThread().interrupt();
-          throw new SpRuntimeException("Interrupted while retrying MS Teams webhook", ie);
+          LOG.debug("Interrupted while waiting to retry - pipeline stopping, giving up");
+          return;
         }
       }
     }
+
+    LOG.error("Giving up on MS Teams notification after {} attempts", MAX_ATTEMPTS);
+    // 'last' is always assigned before reaching this point, but guard defensively.
+    throw last != null ? last : new SpRuntimeException("Sending notification to MS Teams failed.");
   }
 
   /**
-   * Validates a webhook URL to ensure it is not null, not empty, and has a valid URL format.
+   * Validates a webhook URL to ensure it is not null, not empty, and has a valid
+   * URL format.
    *
    * @param webhookUrl The webhook URL to be validated.
-   * @throws SpRuntimeException If the webhook URL is null or empty, or if it is not a valid URL.
+   * @throws SpRuntimeException If the webhook URL is null or empty, or if it is
+   *                            not a valid URL.
    */
-  protected void validateWebhookUrl(String webhookUrl) {
-    if (webhookUrl == null || webhookUrl.isEmpty()) {
-      throw new SpRuntimeException("Given webhook URL is empty");
-    }
-    try {
-      new URL(webhookUrl);
-    } catch (MalformedURLException e) {
-      throw new SpRuntimeException("The given webhook is not a valid URL: %s".formatted(webhookUrl));
-    }
-  }
+   protected URI validateWebhookUrl(String webhookUrl) {
+     if (webhookUrl == null || webhookUrl.isEmpty()) {
+       throw new SpRuntimeException("Given webhook URL is empty");
+     }
+     try {
+     URI uri = new URI(webhookUrl);
+     if (uri.getScheme() == null || uri.getHost() == null) {
+       throw new SpRuntimeException("The given webhook URL is not absolute or has no host");
+     }
+     if (!"http".equalsIgnoreCase(uri.getScheme()) && !"https".equalsIgnoreCase(uri.getScheme())) {
+       throw new SpRuntimeException("The given webhook URL must use http or https");
+     }
+     return uri;
+   } catch (URISyntaxException e) {
+     throw new SpRuntimeException("The given webhook URL is not valid", e);
+   }
+ }
 }

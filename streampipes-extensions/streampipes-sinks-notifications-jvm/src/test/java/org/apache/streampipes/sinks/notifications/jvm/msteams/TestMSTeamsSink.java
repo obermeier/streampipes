@@ -32,7 +32,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -70,7 +73,7 @@ public class TestMSTeamsSink {
   }
 
   @Test
-  public void sendPayloadToWebhook() throws IOException {
+  public void sendPayloadToWebhook() throws IOException, URISyntaxException {
 
     var mockedClient = mock(CloseableHttpClient.class);
     var mockedResponse = mock(CloseableHttpResponse.class);
@@ -85,7 +88,7 @@ public class TestMSTeamsSink {
     var webhook = "https://webhook.com";
     var sink = new MSTeamsSink();
 
-    sink.sendPayloadToWebhook(mockedClient, payload, webhook);
+    sink.sendPayloadToWebhook(mockedClient, payload, new URI(webhook));
     verify(mockedClient, times(1)).execute(argumentCaptor.capture());
 
 
@@ -101,7 +104,7 @@ public class TestMSTeamsSink {
   }
 
   @Test
-  public void sendPayloadToWebhookBadResponse() throws  IOException {
+  public void sendPayloadToWebhookBadResponse() throws IOException {
     CloseableHttpClient mockedClient = mock(CloseableHttpClient.class);
     var mockedResponse = mock(CloseableHttpResponse.class);
     var mockedStatusLine = mock(StatusLine.class);
@@ -114,7 +117,57 @@ public class TestMSTeamsSink {
     var payload = "<a>invalid</a>";
     var url = "https://webhook.com";
 
-    assertThrows(SpRuntimeException.class, () -> sink.sendPayloadToWebhook(mockedClient, payload, url));
+    assertThrows(SpRuntimeException.class, () -> sink.sendPayloadToWebhook(mockedClient, payload, new URI(url)));
+
+    // A 4xx (other than 429) is permanent: it must fail on the first attempt, no retries.
+    verify(mockedClient, times(1)).execute(any());
+  }
+
+  @Test
+  public void sendPayloadToWebhookRetriesOnServerErrorThenGivesUp() throws IOException {
+    var mockedClient = mock(CloseableHttpClient.class);
+    var mockedResponse = mock(CloseableHttpResponse.class);
+    var mockedStatusLine = mock(StatusLine.class);
+
+    // Every attempt returns a 500 -> transient, should be retried up to MAX_ATTEMPTS.
+    when(mockedStatusLine.getStatusCode()).thenReturn(HttpStatus.SC_INTERNAL_SERVER_ERROR);
+    when(mockedResponse.getStatusLine()).thenReturn(mockedStatusLine);
+    when(mockedClient.execute(any())).thenReturn(mockedResponse);
+
+    var sink = new MSTeamsSink();
+
+    assertThrows(SpRuntimeException.class,
+        () -> sink.sendPayloadToWebhook(mockedClient, "payload", new URI("https://webhook.com")));
+
+    // After exhausting all attempts the call must have been made MAX_ATTEMPTS times.
+    verify(mockedClient, times(3)).execute(any());
+  }
+
+  @Test
+  public void sendPayloadToWebhookRecoversAfterTransientFailure() throws IOException {
+    var mockedClient = mock(CloseableHttpClient.class);
+    var failResponse = mock(CloseableHttpResponse.class);
+    var failStatusLine = mock(StatusLine.class);
+    var okResponse = mock(CloseableHttpResponse.class);
+    var okStatusLine = mock(StatusLine.class);
+
+    when(failStatusLine.getStatusCode()).thenReturn(HttpStatus.SC_SERVICE_UNAVAILABLE);
+    when(failResponse.getStatusLine()).thenReturn(failStatusLine);
+    when(okStatusLine.getStatusCode()).thenReturn(HttpStatus.SC_OK);
+    when(okResponse.getStatusLine()).thenReturn(okStatusLine);
+
+    // First call fails with 503, second call succeeds.
+    when(mockedClient.execute(any()))
+        .thenReturn(failResponse)
+        .thenReturn(okResponse);
+
+    var sink = new MSTeamsSink();
+
+    assertDoesNotThrow(
+        () -> sink.sendPayloadToWebhook(mockedClient, "payload", new URI("https://webhook.com")));
+
+    // One failed attempt + one successful retry = two executions, no third.
+    verify(mockedClient, times(2)).execute(any());
   }
 
   @Test
