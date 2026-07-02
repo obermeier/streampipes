@@ -31,6 +31,7 @@ import org.apache.streampipes.model.graph.DataProcessorInvocation;
 import org.apache.streampipes.model.graph.DataSinkInvocation;
 import org.apache.streampipes.model.pipeline.Pipeline;
 import org.apache.streampipes.model.pipeline.PipelineHealthStatus;
+import org.apache.streampipes.resource.management.SpResourceManager;
 import org.apache.streampipes.resource.management.secret.SecretDecrypter;
 import org.apache.streampipes.resource.management.secret.SecretEncrypter;
 import org.apache.streampipes.resource.management.secret.SecretService;
@@ -47,8 +48,6 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
-import static org.apache.streampipes.manager.pipeline.PipelineManager.getPipeline;
-
 public class PipelineHealthCheck {
 
   private static final Logger LOG = LoggerFactory.getLogger(PipelineHealthCheck.class);
@@ -59,11 +58,17 @@ public class PipelineHealthCheck {
 
   private final HealthCheckData healthCheckData;
   private final ExtensionServiceRequestManager requestManager;
+  private final ResourceProvider resourceProvider;
+  private final SpResourceManager resourceManager;
 
   public PipelineHealthCheck(HealthCheckData healthCheckData,
-                             ExtensionServiceRequestManager requestManager) {
+                             ExtensionServiceRequestManager requestManager,
+                             ResourceProvider resourceProvider,
+                             SpResourceManager resourceManager) {
     this.healthCheckData = healthCheckData;
     this.requestManager = requestManager;
+    this.resourceProvider = resourceProvider;
+    this.resourceManager = resourceManager;
   }
 
   public void runCheck() {
@@ -127,7 +132,7 @@ public class PipelineHealthCheck {
               new SecretService(new SecretDecrypter()).apply(pipelineElement);
               pipelineElement.setSelectedEndpointUrl(service.getServiceUrl());
               pipelineElement.setSelectedServiceId(service.getSvcId());
-              success = new InvokeExtensionRequest(requestManager)
+              success = new InvokeExtensionRequest(requestManager, resourceManager)
                   .execute(pipelineElement, pipeline.getPipelineId()).isSuccess();
               new SecretService(new SecretEncrypter()).apply(pipelineElement);
             } catch (NoServiceEndpointsAvailableException e) {
@@ -142,7 +147,6 @@ public class PipelineHealthCheck {
                   MAX_FAILED_ATTEMPTS);
             } else {
               recoveredInstances.add(instanceId);
-              HealthCheckUtils.addSuccessfulRestoreNotification(pipelineNotifications, pipelineElement);
               resetFailedAttempts(instanceId);
               LOG.info("Successfully restored pipeline element {} of pipeline {}",
                   pipelineElement.getName(), pipeline.getName());
@@ -151,12 +155,12 @@ public class PipelineHealthCheck {
         }
       });
       if (shouldUpdatePipeline.get()) {
-        var currentPipeline = getPipeline(pipeline.getPipelineId());
+        var currentPipeline = resourceProvider.pipelineStorage().getElementById(pipeline.getPipelineId());
         if (!failedInstances.isEmpty()) {
           currentPipeline.setHealthStatus(PipelineHealthStatus.FAILURE);
           pipelinesStats.failedIncrease();
         } else if (!recoveredInstances.isEmpty()) {
-          currentPipeline.setHealthStatus(PipelineHealthStatus.REQUIRES_ATTENTION);
+          currentPipeline.setHealthStatus(PipelineHealthStatus.OK);
           pipelinesStats.attentionRequiredIncrease();
         }
         currentPipeline.setSepas(

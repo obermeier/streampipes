@@ -20,7 +20,12 @@ package org.apache.streampipes.export;
 
 import org.apache.streampipes.export.generator.ExportPackageGenerator;
 import org.apache.streampipes.manager.api.extensions.ExtensionServiceRequestManager;
+import org.apache.streampipes.manager.pipeline.PipelineManager;
+import org.apache.streampipes.model.assets.SpAssetModel;
 import org.apache.streampipes.model.export.ExportConfiguration;
+import org.apache.streampipes.model.export.ExportItem;
+import org.apache.streampipes.resource.management.SpResourceManager;
+import org.apache.streampipes.storage.management.StorageDispatcher;
 
 import java.io.IOException;
 import java.util.List;
@@ -29,22 +34,45 @@ import java.util.stream.Collectors;
 public class ExportManager {
 
   public static ExportConfiguration getExportPreview(List<String> selectedAssetIds,
-                                                     ExtensionServiceRequestManager extensionServiceRequestManager) {
+                                                     ExtensionServiceRequestManager extensionServiceRequestManager,
+                                                     SpResourceManager resourceManager,
+                                                     PipelineManager pipelineManager) {
     var exportConfig = new ExportConfiguration();
     var assetExportConfigurations = selectedAssetIds
         .stream()
-        .map(assetId -> new AssetLinkResolver(assetId, extensionServiceRequestManager).resolveResources())
+        .map(assetId -> new AssetLinkResolver(
+            assetId, extensionServiceRequestManager, resourceManager, pipelineManager)
+            .resolveResources())
         .collect(Collectors.toList());
+    var genericStorageAppDocTypes = getGenericStorageAppDocTypes();
 
     exportConfig.setAssetExportConfiguration(assetExportConfigurations);
+    exportConfig.setGenericStorageAppDocTypes(genericStorageAppDocTypes);
 
     return exportConfig;
   }
 
   public static byte[] getExportPackage(ExportConfiguration exportConfiguration,
-                                        ExtensionServiceRequestManager extensionServiceRequestManager)
-      throws IOException {
-    return new ExportPackageGenerator(exportConfiguration, extensionServiceRequestManager).generateExportPackage();
+                                        ExtensionServiceRequestManager extensionServiceRequestManager,
+                                        SpResourceManager resourceManager,
+                                        PipelineManager pipelineManager) throws IOException {
+    return new ExportPackageGenerator(
+        exportConfiguration, extensionServiceRequestManager, resourceManager, pipelineManager)
+        .generateExportPackage();
+  }
+
+  private static List<ExportItem> getGenericStorageAppDocTypes() {
+    try {
+      return StorageDispatcher.INSTANCE.getNoSqlStore()
+          .getGenericStorage()
+          .getAllAppDocTypes()
+          .stream()
+          .filter(appDocType -> !SpAssetModel.APP_DOC_TYPE.equals(appDocType))
+          .map(appDocType -> new ExportItem(appDocType, appDocType, false))
+          .collect(Collectors.toList());
+    } catch (IOException e) {
+        return List.of();
+    }
   }
 
 }

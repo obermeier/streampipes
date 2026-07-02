@@ -17,6 +17,7 @@
  */
 
 import { PermissionUtils } from '../user/PermissionUtils';
+import { GeneralUtils } from '../GeneralUtils';
 import { DatasetBtns } from './DatasetBtns';
 
 export class DatasetUtils {
@@ -24,6 +25,15 @@ export class DatasetUtils {
 
     public static goToDatasets() {
         cy.visit('#/datasets');
+    }
+
+    public static goToDatalakeConfiguration() {
+        this.goToDatasets();
+    }
+
+    public static refreshDataLakeMeasures() {
+        DatasetBtns.refreshDataLakeMeasures().should('be.visible').click();
+        DatasetBtns.datasetTable().should('be.visible');
     }
 
     public static checkAmountOfDatasets(amount: number) {
@@ -117,37 +127,188 @@ export class DatasetUtils {
         }
     }
 
-    public static expectDatasetTotalEventCount(
-        datasetName: string,
-        expectedCount: string,
-    ) {
-        this.loadDatasetTotalEventCount(datasetName);
-        DatasetBtns.datasetTotalCountCell(datasetName).should($element => {
-            const text = $element.text().trim();
-            expect(text).to.equal(expectedCount);
-        });
-    }
-
-    public static loadDatasetTotalEventCount(datasetName: string) {
-        DatasetBtns.datasetRow(datasetName).should('be.visible');
-        DatasetBtns.datasetTotalCountButton(datasetName).then($button => {
-            if ($button.length > 0) {
-                cy.wrap($button[0]).click({ force: true });
-            }
-        });
-
-        DatasetBtns.datasetTotalCountCell(datasetName).should($element => {
-            const text = $element.text().trim();
-            expect(text).not.to.equal('Click to load');
-        });
-    }
-
     public static openDatasetPreview(datasetName: string) {
         DatasetBtns.datasetRow(datasetName)
             .find('mat-icon')
             .contains('preview')
             .parent('button')
             .click();
+    }
+
+    public static openDatasetDetails(datasetName: string) {
+        DatasetUtils.goToDatasets();
+        DatasetUtils.waitForDatasetNotEmpty(datasetName);
+        DatasetBtns.datasetRow(datasetName).click();
+        cy.url().should('include', '#/datasets/');
+    }
+
+    public static waitForDatasetNotEmpty(
+        datasetName?: string,
+        attempts = 30,
+    ): Cypress.Chainable<string> {
+        this.refreshDataLakeMeasures();
+        return this.getDatasetLastEventCell(datasetName).then($cell => {
+            const lastEvent = this.getComparableLastEventValueFromElements(
+                Array.from($cell),
+            );
+
+            if (this.isDatasetNotEmptyValue(lastEvent)) {
+                return lastEvent;
+            } else if (attempts > 0) {
+                cy.wait(1000);
+                return DatasetUtils.waitForDatasetNotEmpty(
+                    datasetName,
+                    attempts - 1,
+                );
+            } else {
+                expect(this.isDatasetNotEmptyValue(lastEvent)).to.equal(true);
+                return lastEvent;
+            }
+        });
+    }
+
+    public static expectDatasetEmpty(datasetName?: string) {
+        this.refreshDataLakeMeasures();
+        this.getDatasetLastEventCell(datasetName)
+            .should('be.visible')
+            .should($element => {
+                expect(
+                    DatasetUtils.isDatasetEmptyValue($element.text()),
+                ).to.equal(true);
+            });
+    }
+
+    public static expectDatasetNotEmpty(datasetName?: string) {
+        this.refreshDataLakeMeasures();
+        this.getDatasetLastEventCell(datasetName)
+            .should('be.visible')
+            .should($element => {
+                expect(
+                    DatasetUtils.isDatasetNotEmptyValue($element.text()),
+                ).to.equal(true);
+            });
+    }
+
+    public static expectDatasetDeleted(datasetName?: string) {
+        this.refreshDataLakeMeasures();
+        if (datasetName) {
+            DatasetBtns.datasetRow(datasetName).should('not.exist');
+            return;
+        }
+
+        this.getDatasetLastEventCell(datasetName).should('not.exist');
+    }
+
+    public static expectDatasetLastEventChanged(
+        previousLastEvent: string,
+        datasetName?: string,
+    ) {
+        this.waitForDatasetLastEventChanged(previousLastEvent, datasetName);
+    }
+
+    private static getDatasetLastEventCell(datasetName?: string) {
+        return datasetName
+            ? DatasetBtns.datasetLastEventCell(datasetName)
+            : DatasetBtns.datalakeLastEvent();
+    }
+
+    private static isDatasetEmptyValue(value: string) {
+        return value.trim() === 'n/a';
+    }
+
+    private static isDatasetNotEmptyValue(value: string) {
+        const normalizedValue = value.trim();
+        return normalizedValue.length > 0 && !this.isDatasetEmptyValue(value);
+    }
+
+    private static getComparableLastEventValue(value: string) {
+        const trimmedValue = value.trim();
+        const exactTimeMatch = trimmedValue.match(/\(([^()]*)\)$/);
+        return exactTimeMatch?.[1] ?? trimmedValue;
+    }
+
+    private static waitForDatasetLastEventChanged(
+        previousLastEvent: string,
+        datasetName?: string,
+        attempts = 30,
+    ): Cypress.Chainable<string> {
+        const previousComparableValue =
+            this.getComparableLastEventValue(previousLastEvent);
+
+        this.refreshDataLakeMeasures();
+        return this.getDatasetLastEventCell(datasetName).then($cell => {
+            const lastEvent = this.getComparableLastEventValueFromElements(
+                Array.from($cell),
+            );
+            const lastEventChanged =
+                this.isDatasetNotEmptyValue(lastEvent) &&
+                this.getComparableLastEventValue(lastEvent) !==
+                    previousComparableValue;
+
+            if (lastEventChanged) {
+                return lastEvent;
+            } else if (attempts > 0) {
+                cy.wait(1000);
+                return this.waitForDatasetLastEventChanged(
+                    previousLastEvent,
+                    datasetName,
+                    attempts - 1,
+                );
+            } else {
+                expect(
+                    this.getComparableLastEventValue(lastEvent),
+                ).not.to.equal(previousComparableValue);
+                return lastEvent;
+            }
+        });
+    }
+
+    private static getComparableLastEventValueFromElements(
+        cells: HTMLElement[],
+    ): string {
+        const rawLastEventValue = cells
+            .flatMap(cell =>
+                Array.from(
+                    cell.querySelectorAll('sp-datalake-last-event-label'),
+                ),
+            )
+            .map(label => label.getAttribute('data-last-event-value'))
+            .find(value => value && this.isDatasetNotEmptyValue(value));
+
+        return (
+            rawLastEventValue ??
+            this.getComparableLastEventValue(
+                cells.map(cell => cell.textContent ?? '').join(' '),
+            )
+        );
+    }
+
+    public static openLatestEventsTab() {
+        GeneralUtils.tab('Latest events');
+    }
+
+    public static setLatestEventsLimit(limit: number) {
+        DatasetBtns.datasetDetailsEventLimit().clear().type(`${limit}`);
+        DatasetBtns.datasetDetailsEventLimit().blur();
+    }
+
+    public static expectSchemaField(runtimeName: string, expectedType: string) {
+        DatasetBtns.datasetDetailsSchemaField(runtimeName).should('be.visible');
+        DatasetBtns.datasetDetailsSchemaType(runtimeName).should(
+            'contain.text',
+            expectedType,
+        );
+    }
+
+    public static expectLatestEventsForColumn(columnName: string) {
+        DatasetBtns.datasetDetailsEventsTable().should('be.visible');
+        DatasetBtns.datasetDetailsEventCell(columnName)
+            .should('exist')
+            .and('have.length.at.least', 1);
+    }
+
+    public static createChartFromDatasetDetails() {
+        DatasetBtns.datasetDetailsCreateChart().click();
     }
 
     public static expectDatasetPreviewDoesNotContainKey(key: string) {

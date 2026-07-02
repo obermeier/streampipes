@@ -30,6 +30,7 @@ import org.apache.streampipes.export.resolver.MeasurementResolver;
 import org.apache.streampipes.export.resolver.PipelineResolver;
 import org.apache.streampipes.manager.api.extensions.ExtensionServiceRequestManager;
 import org.apache.streampipes.manager.file.FileHandler;
+import org.apache.streampipes.manager.pipeline.PipelineManager;
 import org.apache.streampipes.model.SpDataStream;
 import org.apache.streampipes.model.assets.SpAssetModel;
 import org.apache.streampipes.model.dashboard.DashboardModel;
@@ -38,8 +39,9 @@ import org.apache.streampipes.model.datalake.DataLakeMeasure;
 import org.apache.streampipes.model.export.AssetExportConfiguration;
 import org.apache.streampipes.model.export.ExportItem;
 import org.apache.streampipes.model.pipeline.Pipeline;
-import org.apache.streampipes.resource.management.PermissionResourceManager;
+import org.apache.streampipes.resource.management.SpResourceManager;
 import org.apache.streampipes.storage.api.core.INoSqlStorage;
+import org.apache.streampipes.storage.api.explorer.IDataLakeMeasureStorage;
 import org.apache.streampipes.storage.management.StorageDispatcher;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -57,14 +59,22 @@ public class PerformImportGenerator extends ImportGenerator<Void> {
   private final Set<PermissionInfo> permissionsToStore = new HashSet<>();
   private final String ownerSid;
   private final ExtensionServiceRequestManager extensionServiceRequestManager;
+  private final PipelineManager pipelineManager;
+  private final SpResourceManager resourceManager;
+  private final IDataLakeMeasureStorage datasetStorage;
 
   public PerformImportGenerator(AssetExportConfiguration config,
                                 String ownerSid,
-                                ExtensionServiceRequestManager extensionServiceRequestManager) {
+                                ExtensionServiceRequestManager extensionServiceRequestManager,
+                                SpResourceManager resourceManager,
+                                PipelineManager pipelineManager) {
     this.config = config;
     this.storage = StorageDispatcher.INSTANCE.getNoSqlStore();
     this.ownerSid = ownerSid;
     this.extensionServiceRequestManager = extensionServiceRequestManager;
+    this.resourceManager = resourceManager;
+    this.pipelineManager = pipelineManager;
+    this.datasetStorage = resourceManager.manageDataLakeMeasures().getDb();
   }
 
   @Override
@@ -85,7 +95,7 @@ public class PerformImportGenerator extends ImportGenerator<Void> {
   @Override
   protected void handleAdapter(String document, String adapterId) throws JsonProcessingException {
     if (shouldStore(adapterId, config.getAdapters())) {
-      writeDocument(document, new AdapterResolver(extensionServiceRequestManager));
+      writeDocument(document, new AdapterResolver(extensionServiceRequestManager, resourceManager));
       // adapters do not have permissions associated
     }
   }
@@ -93,8 +103,9 @@ public class PerformImportGenerator extends ImportGenerator<Void> {
   @Override
   protected void handleChart(String document, String chartId) throws JsonProcessingException {
     if (shouldStore(chartId, config.getDataViews())) {
-      writeDocument(document, new ChartResolver());
-      var chart = new ChartResolver().deserializeDocument(document);
+      var chartResolver = new ChartResolver(resourceManager);
+      writeDocument(document, chartResolver);
+      var chart = chartResolver.deserializeDocument(document);
       permissionsToStore.add(new PermissionInfo(chart.getElementId(), DataExplorerWidgetModel.class));
     }
   }
@@ -102,8 +113,9 @@ public class PerformImportGenerator extends ImportGenerator<Void> {
   @Override
   protected void handleDashboard(String document, String dashboardId) throws JsonProcessingException {
     if (shouldStore(dashboardId, config.getDashboards())) {
-      writeDocument(document, new DashboardResolver());
-      var dashboard = new DashboardResolver().deserializeDocument(document);
+      var dashboardResourceManager = resourceManager.manageDashboards();
+      writeDocument(document, new DashboardResolver(dashboardResourceManager));
+      var dashboard = new DashboardResolver(dashboardResourceManager).deserializeDocument(document);
       permissionsToStore.add(new PermissionInfo(dashboard.getElementId(), DashboardModel.class));
     }
   }
@@ -120,7 +132,8 @@ public class PerformImportGenerator extends ImportGenerator<Void> {
   @Override
   protected void handlePipeline(String document, String pipelineId) throws JsonProcessingException {
     if (shouldStore(pipelineId, config.getPipelines())) {
-      writeDocument(document, new PipelineResolver(extensionServiceRequestManager));
+      writeDocument(document,
+          new PipelineResolver(extensionServiceRequestManager, pipelineManager, resourceManager.managePipelines()));
       permissionsToStore.add(new PermissionInfo(pipelineId, Pipeline.class));
     }
   }
@@ -128,7 +141,7 @@ public class PerformImportGenerator extends ImportGenerator<Void> {
   @Override
   protected void handleDataLakeMeasure(String document, String dataLakeMeasureId) throws JsonProcessingException {
     if (shouldStore(dataLakeMeasureId, config.getDataLakeMeasures())) {
-      writeDocument(document, new MeasurementResolver());
+      writeDocument(document, new MeasurementResolver(datasetStorage));
       permissionsToStore.add(new PermissionInfo(dataLakeMeasureId, DataLakeMeasure.class));
     }
   }
@@ -137,12 +150,27 @@ public class PerformImportGenerator extends ImportGenerator<Void> {
   protected void handleFile(String document,
                             String fileMetadataId,
                             Map<String, byte[]> zipContent) throws IOException {
-    var resolver = new FileResolver();
+    var resolver = new FileResolver(resourceManager.getFileMetadataStorage());
     var fileMetadata = resolver.readDocument(document);
     writeDocument(document, resolver);
     byte[] file = zipContent.get(
         fileMetadata.getFilename().substring(0, fileMetadata.getFilename().lastIndexOf(".")));
-    new FileHandler().storeFile(fileMetadata.getFilename(), new ByteArrayInputStream(file));
+    new FileHandler(resourceManager.getCoreConfigurationStorage())
+        .storeFile(fileMetadata.getFilename(), new ByteArrayInputStream(file));
+  }
+
+  @Override
+  protected void handleLabel(String document, String labelId) throws JsonProcessingException {
+    if (shouldStore(labelId, config.getLabels())) {
+      writeDocument(document, new GenericStorageDocumentResolver());
+    }
+  }
+
+  @Override
+  protected void handleSite(String document, String siteId) throws JsonProcessingException {
+    if (shouldStore(siteId, config.getSites())) {
+      writeDocument(document, new GenericStorageDocumentResolver());
+    }
   }
 
   @Override
@@ -167,9 +195,8 @@ public class PerformImportGenerator extends ImportGenerator<Void> {
 
   @Override
   protected void afterResourcesCreated() {
-    var resourceManager = new PermissionResourceManager();
     this.permissionsToStore
-        .forEach(info -> resourceManager.createDefault(
+        .forEach(info -> resourceManager.managePermissions().createDefault(
             info.getInstanceId(),
             info.getInstanceClass(),
             this.ownerSid,

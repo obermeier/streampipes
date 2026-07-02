@@ -1,6 +1,3 @@
-import { RetentionTimeConfig } from '@streampipes/platform-services';
-import { RetentionConfig } from '../../dialog/data-retention-dialog/model/retention-config.model';
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -18,16 +15,18 @@ import { RetentionConfig } from '../../dialog/data-retention-dialog/model/retent
  * limitations under the License.
  *
  */
+
 export class DataLakeConfigurationEntry {
     public name: string;
+    public measureName: string;
     public pipelines: string[] = [];
-    public eventsTotal = 0;
-    public eventsLatest = 0;
-    public eventsTotalLoading = false;
-    public eventsLatestLoading = false;
+    public lastEvent: number | null = null;
+    public lastEventLoading = false;
     public remove = true;
     public elementId: string;
-    public retention: RetentionTimeConfig;
+    public retentionConfigured = false;
+    public lastExport: string | null = null;
+    public lastRetentionStatus: boolean | null = null;
 
     constructor() {}
 }

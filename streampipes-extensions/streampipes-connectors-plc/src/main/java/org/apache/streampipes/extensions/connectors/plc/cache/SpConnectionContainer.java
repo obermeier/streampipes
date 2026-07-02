@@ -50,6 +50,7 @@ public class SpConnectionContainer {
   private PlcConnection connection;
   private SpLeasedPlcConnection leasedConnection;
   private Timer idleTimer;
+  private boolean closed;
 
   public SpConnectionContainer(PlcConnectionManager connectionManager, String connectionUrl,
                                Duration maxLeaseTime, Duration maxIdleTime,
@@ -62,9 +63,12 @@ public class SpConnectionContainer {
     this.queue = new LinkedList<>();
     this.connection = null;
     this.leasedConnection = null;
+    this.closed = false;
   }
 
   public synchronized void close() {
+    closed = true;
+
     // Close all waiting clients exceptionally.
     queue.forEach(plcConnectionCompletableFuture ->
         plcConnectionCompletableFuture.completeExceptionally(new PlcConnectionManagerClosedException()));
@@ -99,6 +103,16 @@ public class SpConnectionContainer {
 
   public synchronized Future<PlcConnection> lease() {
     CompletableFuture<PlcConnection> connectionFuture = new CompletableFuture<>();
+
+    if (closed) {
+      connectionFuture.completeExceptionally(new PlcConnectionManagerClosedException());
+      return connectionFuture;
+    }
+
+    if (connection != null && !isConnected(connection)) {
+      closeConnection(connection);
+      connection = null;
+    }
 
     // Try to get a new connection, if we haven't got one yet.
     if (connection == null) {
@@ -147,27 +161,31 @@ public class SpConnectionContainer {
       throw new PlcRuntimeException("Error trying to return lease from invalid connection");
     }
 
-    // If something happened while using the connection, invalidate this one and create a new connection.
+    if (closed) {
+      leasedConnection = null;
+      connection = null;
+      queue.forEach(future -> future.completeExceptionally(new PlcConnectionManagerClosedException()));
+      queue.clear();
+      return;
+    }
+
+    // If something happened while using the connection, invalidate it.
     if (invalidateConnection) {
       // Close the old connection.
-      try {
-        connection.close();
-      } catch (Exception e) {
-        // We're ignoring this as we have no idea, what state the connection is in.
-        // Nevertheless, it is polite to say something in logs about this situation.
-        LOGGER.warn("Exception while closing connection", e);
-      }
+      closeConnection(connection);
+      connection = null;
 
-      // Try to get a new connection.
-      try {
-        connection = connectionManager.getConnection(connectionUrl);
-      } catch (PlcConnectionException e) {
-        // If something goes wrong, close all waiting futures exceptionally.
-        LOGGER.warn("Can't get connection for {} complete queue items exceptionally", connectionUrl, e);
-        queue.forEach(future -> future.completeExceptionally(e));
-        queue.clear();
-        leasedConnection = null;
-        connection = null;
+      // Only reconnect immediately when another client is waiting for the connection.
+      if (!queue.isEmpty()) {
+        try {
+          connection = connectionManager.getConnection(connectionUrl);
+        } catch (PlcConnectionException e) {
+          // If something goes wrong, close all waiting futures exceptionally.
+          LOGGER.warn("Can't get connection for {} complete queue items exceptionally", connectionUrl, e);
+          queue.forEach(future -> future.completeExceptionally(e));
+          queue.clear();
+          leasedConnection = null;
+        }
       }
     }
 
@@ -175,21 +193,16 @@ public class SpConnectionContainer {
     if (queue.isEmpty()) {
       leasedConnection = null;
 
-      // Start a timer to invalidate this connection if it's idle for too long.
-      idleTimer = new Timer("CC-Idle-Timer-" + Thread.currentThread().getId());
-      idleTimer.schedule(new TimerTask() {
-        @Override
-        public void run() {
-          if (connection != null) {
-            try {
-              connection.close();
-            } catch (Exception e) {
-              // Ignore ...
-            }
+      if (connection != null) {
+        // Start a timer to invalidate this connection if it's idle for too long.
+        idleTimer = new Timer("CC-Idle-Timer-" + Thread.currentThread().getId());
+        idleTimer.schedule(new TimerTask() {
+          @Override
+          public void run() {
+            closeIdleConnection();
           }
-          closeConnectionHandler.apply(connectionUrl);
-        }
-      }, maxIdleTime.toMillis());
+        }, maxIdleTime.toMillis());
+      }
       return;
     }
 
@@ -206,6 +219,46 @@ public class SpConnectionContainer {
     CompletableFuture<PlcConnection> leaseFuture = queue.poll();
     if (leaseFuture != null) {
       leaseFuture.complete(leasedConnection);
+    }
+  }
+
+  private void closeIdleConnection() {
+    PlcConnection connectionToClose;
+    synchronized (this) {
+      if (closed || leasedConnection != null || connection == null) {
+        return;
+      }
+
+      closed = true;
+      connectionToClose = connection;
+      connection = null;
+      idleTimer = null;
+      queue.forEach(future -> future.completeExceptionally(new PlcConnectionManagerClosedException()));
+      queue.clear();
+    }
+
+    closeConnectionHandler.apply(connectionUrl);
+    try {
+      connectionToClose.close();
+    } catch (Exception e) {
+      // Ignore ...
+    }
+  }
+
+  private boolean isConnected(PlcConnection plcConnection) {
+    try {
+      return plcConnection.isConnected();
+    } catch (Exception e) {
+      LOGGER.warn("Exception while checking connection state for {}", connectionUrl, e);
+      return false;
+    }
+  }
+
+  private void closeConnection(PlcConnection plcConnection) {
+    try {
+      plcConnection.close();
+    } catch (Exception e) {
+      LOGGER.warn("Exception while closing stale connection for {}", connectionUrl, e);
     }
   }
 
@@ -232,4 +285,3 @@ public class SpConnectionContainer {
 
 
 }
-

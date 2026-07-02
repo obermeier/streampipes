@@ -24,6 +24,7 @@ import org.apache.streampipes.manager.assets.AssetManager;
 import org.apache.streampipes.model.connect.adapter.AdapterDescription;
 import org.apache.streampipes.model.extensions.svcdiscovery.SpServiceTag;
 import org.apache.streampipes.resource.management.PermissionResourceManager;
+import org.apache.streampipes.resource.management.SpResourceManager;
 import org.apache.streampipes.resource.management.UserResourceManager;
 import org.apache.streampipes.storage.api.connect.IAdapterStorage;
 import org.apache.streampipes.storage.api.user.IPermissionStorage;
@@ -44,18 +45,18 @@ public class WorkerAdministrationManagement {
   private final PermissionResourceManager permissionResourceManager;
   private final UserResourceManager userResourceManager;
   private final ExtensionServiceRequestManager requestManager;
+  private final AssetManager assetManager;
 
   public WorkerAdministrationManagement(
       IAdapterStorage adapterDescriptionStorage,
-      IPermissionStorage permissionStorage,
-      UserResourceManager userResourceManager,
-      PermissionResourceManager permissionResourceManager,
+      SpResourceManager resourceManager,
       ExtensionServiceRequestManager requestManager) {
     this.adapterDescriptionStorage = adapterDescriptionStorage;
-    this.userResourceManager = userResourceManager;
-    this.permissionStorage = permissionStorage;
-    this.permissionResourceManager = permissionResourceManager;
+    this.userResourceManager = resourceManager.manageUsers();
+    this.permissionStorage = resourceManager.managePermissions().getDb();
+    this.permissionResourceManager = resourceManager.managePermissions();
     this.requestManager = requestManager;
+    this.assetManager = new AssetManager(resourceManager.getCoreConfigurationStorage());
   }
 
   public void performAdapterMigrations(List<SpServiceTag> tags) {
@@ -64,10 +65,10 @@ public class WorkerAdministrationManagement {
     installedAdapters.stream()
         .filter(adapter -> tags.stream().anyMatch(tag -> tag.getValue().equals(adapter.getAppId())))
         .forEach(adapter -> {
-          if (!AssetManager.existsAssetDir(adapter.getAppId())) {
+          if (!assetManager.existsAssetDir(adapter.getAppId())) {
             try {
               LOG.info("Updating assets for adapter {}", adapter.getAppId());
-              AssetManager.storeAsset(SpServiceUrlProvider.ADAPTER, adapter.getAppId(), requestManager);
+              assetManager.storeAsset(SpServiceUrlProvider.ADAPTER, adapter.getAppId(), requestManager);
             } catch (IOException | NoServiceEndpointsAvailableException e) {
               LOG.error(
                   "Could not fetch asset for adapter {}, please try to manually update this adapter.",

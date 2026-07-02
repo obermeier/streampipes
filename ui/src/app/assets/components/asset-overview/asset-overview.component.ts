@@ -26,6 +26,7 @@ import {
     MatTableDataSource,
 } from '@angular/material/table';
 import {
+    AssetSummaryDto,
     AssetManagementService,
     SpAssetModel,
 } from '@streampipes/platform-services';
@@ -33,7 +34,8 @@ import {
     ConfirmDialogComponent,
     CurrentUserService,
     DialogService,
-    ObjectPermissionDialogComponent,
+    ObjectManageDialogComponent,
+    ObjectManageDialogResourceConfig,
     PanelType,
     SpAssetBrowserService,
     SpBasicHeaderTitleComponent,
@@ -44,7 +46,6 @@ import {
 } from '@streampipes/shared-ui';
 import { SpAssetRoutes } from '../../assets.breadcrumb';
 import { Router } from '@angular/router';
-import { SpCreateAssetDialogComponent } from '../../dialog/create-asset/create-asset-dialog.component';
 import { IdGeneratorService } from '../../../core-services/id-generator/id-generator.service';
 import { UserPrivilege } from '../../../core/auth/user-privilege.enum';
 import { MatDialog } from '@angular/material/dialog';
@@ -60,6 +61,11 @@ import { MatButton, MatIconButton } from '@angular/material/button';
 import { MatTooltip } from '@angular/material/tooltip';
 import { MatMenuItem } from '@angular/material/menu';
 import { MatIcon } from '@angular/material/icon';
+
+type ManageableAsset = SpAssetModel & {
+    name: string;
+    description: string;
+};
 
 @Component({
     selector: 'sp-asset-overview',
@@ -99,16 +105,16 @@ export class SpAssetOverviewComponent implements OnInit {
     private dialog = inject(MatDialog);
     private translateService = inject(TranslateService);
 
-    existingAssets: SpAssetModel[] = [];
-    filteredAssets: SpAssetModel[] = [];
+    existingAssets: AssetSummaryDto[] = [];
+    filteredAssets: AssetSummaryDto[] = [];
 
     displayedColumns: string[] = ['assetName', 'actions'];
 
     @ViewChild(MatSort)
     sort: MatSort;
 
-    dataSource: MatTableDataSource<SpAssetModel> =
-        new MatTableDataSource<SpAssetModel>();
+    dataSource: MatTableDataSource<AssetSummaryDto> =
+        new MatTableDataSource<AssetSummaryDto>();
 
     hasWritePrivilege = false;
 
@@ -153,8 +159,8 @@ export class SpAssetOverviewComponent implements OnInit {
     }
 
     loadAssets(): void {
-        this.assetService.getAllAssets().subscribe(result => {
-            this.existingAssets = (result as SpAssetModel[]).sort((a, b) =>
+        this.assetService.getAssetSummary().subscribe(result => {
+            this.existingAssets = result.resources.sort((a, b) =>
                 a.assetName.localeCompare(b.assetName),
             );
             this.applyAssetFilters(this.currentFilterIds);
@@ -189,33 +195,23 @@ export class SpAssetOverviewComponent implements OnInit {
             additionalData: {},
             labelIds: [],
         };
-        const dialogRef = this.dialogService.open(
-            SpCreateAssetDialogComponent,
+        this.router.navigate(
+            ['assets', 'details', assetModel.elementId, 'edit'],
             {
-                panelType: PanelType.SLIDE_IN_PANEL,
-                title: this.translateService.instant('Create asset'),
-                width: '50vw',
-                data: {
-                    assetModel: assetModel,
+                state: {
+                    assetModel,
+                    isNewAsset: true,
                 },
             },
         );
-
-        dialogRef.afterClosed().subscribe(ev => {
-            if (ev) {
-                this.loadAssets();
-                this.assetBrowserService.refreshBrowserAssetData();
-                this.goToDetailsView(assetModel, true);
-            }
-        });
     }
 
-    goToDetailsView(asset: SpAssetModel, editMode = false) {
+    goToDetailsView(asset: AssetSummaryDto, editMode = false) {
         const mode = editMode && this.hasWritePrivilege ? 'edit' : 'view';
         this.router.navigate(['assets', 'details', asset.elementId, mode]);
     }
 
-    deleteAsset(asset: SpAssetModel) {
+    deleteAsset(asset: AssetSummaryDto) {
         const dialogRef = this.dialog.open(ConfirmDialogComponent, {
             width: '500px',
             data: {
@@ -239,21 +235,58 @@ export class SpAssetOverviewComponent implements OnInit {
         });
     }
 
-    openPermissionsDialog(asset: SpAssetModel) {
-        const dialogRef = this.dialogService.open(
-            ObjectPermissionDialogComponent,
-            {
-                panelType: PanelType.SLIDE_IN_PANEL,
-                title: this.translateService.instant('Manage permissions'),
-                width: '70vw',
-                data: {
-                    objectInstanceId: asset.elementId,
-                    headerTitle:
-                        this.translateService.instant(
-                            'Manage permissions for asset ',
-                        ) + asset.assetName,
+    showManageDialog(assetSummary: AssetSummaryDto) {
+        this.assetService.getAsset(assetSummary.elementId).subscribe(asset => {
+            const resource: ManageableAsset = {
+                ...asset,
+                name: asset.assetName,
+                description: asset.assetDescription,
+            };
+            const resourceConfig: ObjectManageDialogResourceConfig<ManageableAsset> =
+                {
+                    resourceLabel: 'Asset',
+                    nameLabel: 'Asset name',
+                    descriptionLabel: 'Asset description',
+                    nameProperty: 'name',
+                    showResourceFields: this.hasWritePrivilege,
+                    showAssetLinking: false,
+                    saveResource: this.hasWritePrivilege
+                        ? resource => {
+                              const { name, description, ...assetToSave } =
+                                  resource;
+                              return this.assetService.updateAsset({
+                                  ...assetToSave,
+                                  assetName: name,
+                                  assetDescription: description,
+                              });
+                          }
+                        : undefined,
+                };
+
+            const dialogRef = this.dialogService.open(
+                ObjectManageDialogComponent,
+                {
+                    panelType: PanelType.SLIDE_IN_PANEL,
+                    title: this.translateService.instant('Manage'),
+                    width: '50vw',
+                    data: {
+                        objectInstanceId: resource.elementId,
+                        resource,
+                        saveMode: 'immediate',
+                        resourceConfig,
+                        headerTitle:
+                            this.translateService.instant('Manage Asset ') +
+                            resource.assetName,
+                    },
                 },
-            },
-        );
+            );
+
+            dialogRef.afterClosed().subscribe(refresh => {
+                if (refresh) {
+                    this.loadAssets();
+                    this.assetBrowserService.refreshBrowserAssetData();
+                }
+            });
+        });
     }
 }

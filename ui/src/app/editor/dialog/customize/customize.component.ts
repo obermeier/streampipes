@@ -67,6 +67,7 @@ import { PipelineElementTemplateConfigComponent } from '../../../core-ui/pipelin
 import { MatDivider } from '@angular/material/divider';
 import { MatButton } from '@angular/material/button';
 import { TranslatePipe } from '@ngx-translate/core';
+import { LayoutGapDirective } from '@ngbracket/ngx-layout';
 
 @Component({
     selector: 'sp-customize-pipeline-element',
@@ -92,6 +93,7 @@ import { TranslatePipe } from '@ngx-translate/core';
         MatDivider,
         MatButton,
         TranslatePipe,
+        LayoutGapDirective,
     ],
 })
 export class CustomizeComponent implements OnInit, AfterViewInit {
@@ -154,9 +156,9 @@ export class CustomizeComponent implements OnInit, AfterViewInit {
 
         this.parentForm = this.fb.group({});
 
-        this.parentForm.valueChanges.subscribe(v => {});
+        this.parentForm.valueChanges.subscribe(_v => {});
 
-        this.parentForm.statusChanges.subscribe(status => {
+        this.parentForm.statusChanges.subscribe(_status => {
             this.formValid = this.viewInitialized && this.parentForm.valid;
         });
         if (this.shepherdService.isTourActive()) {
@@ -234,7 +236,7 @@ export class CustomizeComponent implements OnInit, AfterViewInit {
         this.template.templateConfigs = this.convert(this.templateConfigs);
         this.pipelineElementTemplateService
             .storePipelineElementTemplate(this.template)
-            .subscribe(result => {
+            .subscribe(_result => {
                 this.loadPipelineElementTemplates();
                 this.templateMode = false;
             });

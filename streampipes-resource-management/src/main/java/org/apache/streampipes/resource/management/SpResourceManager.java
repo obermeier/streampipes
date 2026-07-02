@@ -17,48 +17,132 @@
  */
 package org.apache.streampipes.resource.management;
 
-import org.apache.streampipes.storage.api.explorer.IDataExplorerWidgetStorage;
+import org.apache.streampipes.storage.api.connect.IAdapterStorage;
+import org.apache.streampipes.storage.api.explorer.IChartStorage;
+import org.apache.streampipes.storage.api.explorer.IDashboardStorage;
+import org.apache.streampipes.storage.api.explorer.IDataLakeMeasureStorage;
+import org.apache.streampipes.storage.api.pipeline.IPipelineStorage;
+import org.apache.streampipes.storage.api.system.IAssetStorage;
+import org.apache.streampipes.storage.api.system.IFileMetadataStorage;
+import org.apache.streampipes.storage.api.system.ISpCoreConfigurationStorage;
+import org.apache.streampipes.storage.api.user.IPermissionStorage;
+import org.apache.streampipes.storage.api.user.IPrivilegeStorage;
+import org.apache.streampipes.storage.api.user.IRoleStorage;
+import org.apache.streampipes.storage.api.user.IUserGroupStorage;
+import org.apache.streampipes.storage.api.user.IUserStorage;
+import org.apache.streampipes.storage.management.StorageDispatcher;
 
 public class SpResourceManager {
 
-  public AdapterResourceManager manageAdapters() {
-    return new AdapterResourceManager();
+  private final IPermissionStorage permissionStorage;
+  private final IChartStorage chartStorage;
+  private final IAdapterStorage adapterStorage;
+  private final IAssetStorage assetStorage;
+  private final IDashboardStorage dashboardStorage;
+  private final IPipelineStorage pipelineStorage;
+  private final IDataLakeMeasureStorage datasetStorage;
+  private final ISpCoreConfigurationStorage coreConfigurationStorage;
+  private final IFileMetadataStorage fileMetadataStorage;
+  private final IRoleStorage roleStorage;
+  private final IUserGroupStorage userGroupStorage;
+  private final IPrivilegeStorage privilegeStorage;
+  private final IUserStorage userStorage;
+
+  public SpResourceManager(IPermissionStorage permissionStorage,
+                           IChartStorage chartStorage,
+                           IAdapterStorage adapterStorage,
+                           IAssetStorage assetStorage,
+                           IDashboardStorage dashboardStorage,
+                           IPipelineStorage pipelineStorage,
+                           IDataLakeMeasureStorage datasetStorage,
+                           ISpCoreConfigurationStorage coreConfigurationStorage,
+                           IFileMetadataStorage fileMetadataStorage,
+                           IRoleStorage roleStorage,
+                           IUserGroupStorage userGroupStorage,
+                           IPrivilegeStorage privilegeStorage,
+                           IUserStorage userStorage) {
+    this.permissionStorage = permissionStorage;
+    this.chartStorage = chartStorage;
+    this.adapterStorage = adapterStorage;
+    this.assetStorage = assetStorage;
+    this.dashboardStorage = dashboardStorage;
+    this.pipelineStorage = pipelineStorage;
+    this.datasetStorage = datasetStorage;
+    this.coreConfigurationStorage = coreConfigurationStorage;
+    this.fileMetadataStorage = fileMetadataStorage;
+    this.roleStorage = roleStorage;
+    this.userGroupStorage = userGroupStorage;
+    this.privilegeStorage = privilegeStorage;
+    this.userStorage = userStorage;
   }
 
   public AdapterDescriptionResourceManager manageAdapterDescriptions() {
-    return new AdapterDescriptionResourceManager();
-  }
-
-  public DataExplorerResourceManager manageDataExplorer() {
-    return new DataExplorerResourceManager();
-  }
-
-  public DataExplorerWidgetResourceManager manageDataExplorerWidget(DataExplorerResourceManager dashboardManager,
-                                                                    IDataExplorerWidgetStorage db) {
-    return new DataExplorerWidgetResourceManager(dashboardManager, db);
-  }
-
-  public DataProcessorResourceManager manageDataProcessors() {
-    return new DataProcessorResourceManager();
+    return new AdapterDescriptionResourceManager(managePermissions());
   }
 
   public DataSinkResourceManager manageDataSinks() {
-    return new DataSinkResourceManager();
+    return new DataSinkResourceManager(managePermissions());
+  }
+
+  public DataProcessorResourceManager manageDataProcessors() {
+    return new DataProcessorResourceManager(managePermissions());
   }
 
   public DataStreamResourceManager manageDataStreams() {
-    return new DataStreamResourceManager();
+    return new DataStreamResourceManager(managePermissions());
   }
 
-  public PipelineResourceManager managePipelines() {
-    return new PipelineResourceManager();
+  public AssetResourceManager manageAssets() {
+    return new AssetResourceManager(assetStorage, managePermissions());
+  }
+
+  public AdapterResourceManager manageAdapters() {
+    var certificateStorage = StorageDispatcher.INSTANCE.getNoSqlStore().getCertificateStorage();
+    return new AdapterResourceManager(adapterStorage, certificateStorage, managePermissions());
+  }
+
+  public DataLakeMeasureResourceManager manageDataLakeMeasures() {
+    return new DataLakeMeasureResourceManager(datasetStorage, pipelineStorage, managePermissions());
   }
 
   public PermissionResourceManager managePermissions() {
-    return new PermissionResourceManager();
+    return new PermissionResourceManager(permissionStorage);
+  }
+
+  public DashboardResourceManager manageDashboards() {
+    return new DashboardResourceManager(dashboardStorage, chartStorage, datasetStorage, managePermissions());
+  }
+
+  public ChartResourceManager manageCharts() {
+    return new ChartResourceManager(manageDashboards(), chartStorage,  managePermissions());
+  }
+
+  public PipelineResourceManager managePipelines() {
+    return new PipelineResourceManager(pipelineStorage, managePermissions()
+    );
+  }
+
+  public ISpCoreConfigurationStorage getCoreConfigurationStorage() {
+    return coreConfigurationStorage;
+  }
+
+  public IFileMetadataStorage getFileMetadataStorage() {
+    return fileMetadataStorage;
+  }
+
+  public IRoleStorage getRoleStorage() {
+    return roleStorage;
+  }
+
+  public IUserGroupStorage getUserGroupStorage() {
+    return userGroupStorage;
+  }
+
+  public IPrivilegeStorage getPrivilegeStorage() {
+    return privilegeStorage;
   }
 
   public UserResourceManager manageUsers() {
-    return new UserResourceManager();
+    return new UserResourceManager(userStorage, coreConfigurationStorage);
   }
 }

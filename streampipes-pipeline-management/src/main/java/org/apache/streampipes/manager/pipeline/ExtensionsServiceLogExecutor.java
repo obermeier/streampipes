@@ -31,6 +31,7 @@ import org.apache.streampipes.model.extensions.svcdiscovery.SpServiceRegistratio
 import org.apache.streampipes.model.graph.DataProcessorInvocation;
 import org.apache.streampipes.model.graph.DataSinkInvocation;
 import org.apache.streampipes.model.monitoring.SpEndpointMonitoringInfo;
+import org.apache.streampipes.resource.management.SpResourceManager;
 import org.apache.streampipes.serializers.json.JacksonSerializer;
 import org.apache.streampipes.svcdiscovery.SpServiceDiscovery;
 import org.apache.streampipes.svcdiscovery.api.model.DefaultSpServiceTypes;
@@ -52,9 +53,12 @@ public class ExtensionsServiceLogExecutor implements Runnable {
   private static final PipelineFlowStats pipelineFlowStats = new PipelineFlowStats();
 
   private final ExtensionServiceRequestManager extensionRequestManager;
+  private final SpResourceManager resourceManager;
 
-  public ExtensionsServiceLogExecutor(ExtensionServiceRequestManager extensionRequestManager) {
+  public ExtensionsServiceLogExecutor(ExtensionServiceRequestManager extensionRequestManager,
+                                      SpResourceManager resourceManager) {
     this.extensionRequestManager = Objects.requireNonNull(extensionRequestManager);
+    this.resourceManager = resourceManager;
   }
 
   public void run() {
@@ -64,11 +68,29 @@ public class ExtensionsServiceLogExecutor implements Runnable {
 
   public void triggerUpdate() {
     List<SpServiceRegistration> serviceEndpoints = getActiveExtensionsEndpoints();
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Monitoring fetch triggered: serviceCount={}, thread={}",
+          serviceEndpoints.size(),
+          Thread.currentThread().getName());
+    }
 
     serviceEndpoints.forEach(serviceEndpoint -> {
       try {
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Fetching monitoring info from extension service: serviceId={}, serviceUrl={}, thread={}",
+              serviceEndpoint.getSvcId(),
+              serviceEndpoint.getServiceUrl(),
+              Thread.currentThread().getName());
+        }
+
         var target = ExtensionServiceRequestTargets.serviceHealth(serviceEndpoint, LOG_PATH);
-        var response = extensionRequestManager.request(ExtensionServiceRequests.serviceHealth(target));
+        var response = extensionRequestManager.request(ExtensionServiceRequests.serviceHealth(target, resourceManager));
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Monitoring fetch response from extension service: serviceId={}, status={}, success={}",
+              serviceEndpoint.getSvcId(),
+              response.statusCode(),
+              response.isSuccess());
+        }
 
         if (!response.isSuccess()) {
           LOG.info("Could not fetch log info from endpoint {} (status {})",
@@ -77,9 +99,18 @@ public class ExtensionsServiceLogExecutor implements Runnable {
         }
 
         SpEndpointMonitoringInfo monitoringInfo = parseLogResponse(response.responseBody());
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Fetched monitoring info from extension service: serviceId={}, resourceCount={}, "
+                  + "totalOutputCounter={}, latestOutputTimestamp={}",
+              serviceEndpoint.getSvcId(),
+              monitoringInfo.getMetricsInfos().size(),
+              totalOutputCounter(monitoringInfo),
+              latestOutputTimestamp(monitoringInfo));
+        }
+
         ExtensionsLogProvider.INSTANCE.addMonitoringInfos(monitoringInfo);
       } catch (IOException e) {
-        LOG.info("Could not fetch log info from endpoint {}", serviceEndpoint);
+        LOG.info("Could not fetch log info from endpoint {}", serviceEndpoint, e);
       }
     });
 
@@ -95,7 +126,9 @@ public class ExtensionsServiceLogExecutor implements Runnable {
 
   private void updatePipelineFlow() {
     pipelineFlowStats.clear();
-    ExtensionsLogProvider.INSTANCE.getMetricsGroupedByPipeline().forEach((pipelineId, data) -> {
+    var pipelineStorage = resourceManager.managePipelines().getDb();
+    ExtensionsLogProvider.INSTANCE.getMetricsGroupedByPipeline(pipelineStorage)
+        .forEach((pipelineId, data) -> {
       data.forEach((k, v) -> {
         // Total "in" count
         long dataCountIn = v.getMessagesIn()
@@ -143,5 +176,22 @@ public class ExtensionsServiceLogExecutor implements Runnable {
   private SpEndpointMonitoringInfo parseLogResponse(String response)
       throws JsonProcessingException {
     return JacksonSerializer.getObjectMapper().readValue(response, SpEndpointMonitoringInfo.class);
+  }
+
+  private long totalOutputCounter(SpEndpointMonitoringInfo monitoringInfo) {
+    return monitoringInfo.getMetricsInfos()
+        .values()
+        .stream()
+        .mapToLong(metricsEntry -> metricsEntry.getMessagesOut().getCounter())
+        .sum();
+  }
+
+  private long latestOutputTimestamp(SpEndpointMonitoringInfo monitoringInfo) {
+    return monitoringInfo.getMetricsInfos()
+        .values()
+        .stream()
+        .mapToLong(metricsEntry -> metricsEntry.getMessagesOut().getLastTimestamp())
+        .max()
+        .orElse(0);
   }
 }

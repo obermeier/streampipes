@@ -19,11 +19,10 @@
 import { ConnectUtils } from '../../support/utils/connect/ConnectUtils';
 import { ConnectBtns } from '../../support/utils/connect/ConnectBtns';
 import { AdapterBuilder } from '../../support/builder/AdapterBuilder';
-import { ChartUtils } from '../../support/utils/chart/ChartUtils';
-import { ChartBtns } from '../../support/utils/chart/ChartBtns';
 import { SharedUtils } from '../../support/utils/shared/SharedUtils';
 import { SharedBtns } from '../../support/utils/shared/SharedBtns';
 import { ConnectEventSchemaUtils } from '../../support/utils/connect/ConnectEventSchemaUtils';
+import { DatasetUtils } from '../../support/utils/dataset/DatasetUtils';
 
 describe('Test Edit Adapter', () => {
     beforeEach('Setup Test', () => {
@@ -38,10 +37,9 @@ describe('Test Edit Adapter', () => {
         ConnectUtils.goToConnect();
 
         // stop adapter
-        ConnectBtns.stopAdapter().click();
+        ConnectUtils.stopAdapterAndWaitForStateTransition();
 
         // click edit adapter
-        ConnectBtns.adapterOperationInProgressSpinner().should('not.exist');
         ConnectBtns.openActionsMenu('simulator');
         ConnectBtns.editAdapter().should('not.be.disabled');
         ConnectBtns.editAdapter().click();
@@ -65,8 +63,7 @@ describe('Test Edit Adapter', () => {
         SharedUtils.confirmDialogVisible();
         SharedBtns.confirmDialogConfirmBtn().click();
 
-        cy.wait(1000);
-        ConnectBtns.refreshSchemaBtn().click();
+        ConnectUtils.refreshEventSchema();
         ConnectUtils.finishConfigureFieldsConfiguration();
 
         ConnectBtns.adapterNameInput().clear().type(newAdapterName);
@@ -91,7 +88,7 @@ describe('Test Edit Adapter', () => {
         ConnectUtils.goToConnect();
 
         // stop adapter and edit adapter
-        ConnectBtns.stopAdapter().click();
+        ConnectUtils.stopAdapterAndWaitForStateTransition();
         ConnectBtns.openActionsMenu('simulator');
         ConnectBtns.editAdapter().click();
 
@@ -103,34 +100,21 @@ describe('Test Edit Adapter', () => {
                 '  out.collect(event);\n',
         );
         ConnectBtns.configureSchemaRunScriptBtn().click();
-        cy.wait(1000);
 
-        ConnectBtns.configureSchemaNextBtn().click();
+        ConnectUtils.finishEventSchemaConfiguration();
         SharedUtils.confirmDialogVisible();
         SharedBtns.confirmDialogConfirmBtn().click();
+        SharedUtils.confirmDialogClosed();
         ConnectEventSchemaUtils.markPropertyAsTimestamp('timestamp');
 
         storeAndStartEditedAdapter();
 
-        // Validate that the data is further persisted in the database by checking if the amount of events in the data lake changes
-        ChartUtils.goToDatalakeConfiguration();
-
-        ChartUtils.waitForCountingResults();
-
-        let initialValue;
-
-        ChartUtils.getDatalakeNumberOfEvents().then(value => {
-            initialValue = value;
-        });
-
-        cy.wait(3000);
-
-        ChartBtns.refreshDataLakeMeasures().click();
-
-        ChartUtils.waitForCountingResults();
-
-        ChartUtils.getDatalakeNumberOfEvents().then(newValue => {
-            expect(newValue).not.equal(initialValue);
+        // Validate that the data is further persisted in the database by checking if the last event changes in the data lake
+        DatasetUtils.goToDatalakeConfiguration();
+        DatasetUtils.waitForDatasetNotEmpty().then(initialLastEvent => {
+            cy.wait(3000);
+            DatasetUtils.goToDatalakeConfiguration();
+            DatasetUtils.expectDatasetLastEventChanged(initialLastEvent);
         });
     });
 

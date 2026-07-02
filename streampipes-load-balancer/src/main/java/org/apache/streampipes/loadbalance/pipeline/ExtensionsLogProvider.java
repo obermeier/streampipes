@@ -22,7 +22,10 @@ import org.apache.streampipes.model.monitoring.SpEndpointMonitoringInfo;
 import org.apache.streampipes.model.monitoring.SpLogEntry;
 import org.apache.streampipes.model.monitoring.SpMetricsEntry;
 import org.apache.streampipes.model.pipeline.Pipeline;
-import org.apache.streampipes.storage.management.StorageDispatcher;
+import org.apache.streampipes.storage.api.pipeline.IPipelineStorage;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -32,17 +35,36 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-public enum   ExtensionsLogProvider {
+public enum ExtensionsLogProvider {
 
   INSTANCE;
 
+  private static final Logger LOG = LoggerFactory.getLogger(ExtensionsLogProvider.class);
   private static final int MAX_ITEMS = 50;
 
   private final Map<String, List<SpLogEntry>> allLogInfos = new HashMap<>();
   private final Map<String, SpMetricsEntry> allMetricsInfos = new HashMap<>();
 
   public void addMonitoringInfos(SpEndpointMonitoringInfo monitoringInfo) {
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Updating core monitoring cache: incomingResourceCount={}, cachedResourceCountBefore={}, "
+              + "incomingTotalOutputCounter={}, incomingLatestOutputTimestamp={}, thread={}",
+          monitoringInfo.getMetricsInfos().size(),
+          allMetricsInfos.size(),
+          totalOutputCounter(monitoringInfo.getMetricsInfos()),
+          latestOutputTimestamp(monitoringInfo.getMetricsInfos()),
+          Thread.currentThread().getName());
+    }
+
     allMetricsInfos.putAll(monitoringInfo.getMetricsInfos());
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Updated core monitoring cache: cachedResourceCountAfter={}, cachedTotalOutputCounter={}, "
+              + "cachedLatestOutputTimestamp={}",
+          allMetricsInfos.size(),
+          totalOutputCounter(allMetricsInfos),
+          latestOutputTimestamp(allMetricsInfos));
+    }
+
     monitoringInfo.getLogInfos().forEach((key, value) -> {    
       if (!allLogInfos.containsKey(key)) {
         allLogInfos.put(key, new ArrayList<>());
@@ -72,8 +94,9 @@ public enum   ExtensionsLogProvider {
     return getInfosForPipeline(allLogInfos, pipeline);
   }
 
-  public Map<String, List<SpLogEntry>> getLogInfosForPipeline(String pipelineId) {
-    var pipeline = StorageDispatcher.INSTANCE.getNoSqlStore().getPipelineStorageAPI().getElementById(pipelineId);
+  public Map<String, List<SpLogEntry>> getLogInfosForPipeline(IPipelineStorage pipelineStorage,
+                                                              String pipelineId) {
+    var pipeline = pipelineStorage.getElementById(pipelineId);
 
     return getLogInfosForPipeline(pipeline);
   }
@@ -95,8 +118,9 @@ public enum   ExtensionsLogProvider {
         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
-  public Map<String, SpMetricsEntry> getMetricInfosForPipeline(String pipelineId) {
-    var pipeline = StorageDispatcher.INSTANCE.getNoSqlStore().getPipelineStorageAPI().getElementById(pipelineId);
+  public Map<String, SpMetricsEntry> getMetricInfosForPipeline(IPipelineStorage pipelineStorage,
+                                                               String pipelineId) {
+    var pipeline = pipelineStorage.getElementById(pipelineId);
 
     return getInfosForPipeline(allMetricsInfos, pipeline);
   }
@@ -118,6 +142,21 @@ public enum   ExtensionsLogProvider {
   public Map<String, SpMetricsEntry> getAllMetricsInfos() {
     return this.allMetricsInfos;
   }
+
+  private long totalOutputCounter(Map<String, SpMetricsEntry> metricsInfos) {
+    return metricsInfos.values()
+        .stream()
+        .mapToLong(metricsEntry -> metricsEntry.getMessagesOut().getCounter())
+        .sum();
+  }
+
+  private long latestOutputTimestamp(Map<String, SpMetricsEntry> metricsInfos) {
+    return metricsInfos.values()
+        .stream()
+        .mapToLong(metricsEntry -> metricsEntry.getMessagesOut().getLastTimestamp())
+        .max()
+        .orElse(0);
+  }
   
   private List<String> collectPipelineElementIds(Pipeline pipeline) {
     if (pipeline != null){
@@ -137,16 +176,15 @@ public enum   ExtensionsLogProvider {
   }
 
 
-  public Map<String, Map<String, SpMetricsEntry>> getMetricsGroupedByPipeline() {
+  public Map<String, Map<String, SpMetricsEntry>> getMetricsGroupedByPipeline(IPipelineStorage pipelineStorage) {
 
-    var allPipelines = StorageDispatcher.INSTANCE
-        .getNoSqlStore()
-        .getPipelineStorageAPI().findAll();
+    var allPipelines = pipelineStorage.findAll();
 
     Map<String, Map<String, SpMetricsEntry>> result = new HashMap<>();
 
     for (Pipeline pipeline : allPipelines) {
-        var metrics = ExtensionsLogProvider.INSTANCE.getMetricInfosForPipeline(pipeline.getPipelineId());
+        var metrics =
+            ExtensionsLogProvider.INSTANCE.getMetricInfosForPipeline(pipelineStorage, pipeline.getPipelineId());
         result.put(pipeline.getElementId(), metrics);
     }
 

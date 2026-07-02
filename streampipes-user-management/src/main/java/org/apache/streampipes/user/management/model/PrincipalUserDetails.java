@@ -18,6 +18,9 @@
 package org.apache.streampipes.user.management.model;
 
 import org.apache.streampipes.model.client.user.Principal;
+import org.apache.streampipes.storage.api.user.IPermissionStorage;
+import org.apache.streampipes.storage.api.user.IRoleStorage;
+import org.apache.streampipes.storage.api.user.IUserGroupStorage;
 import org.apache.streampipes.user.management.util.GrantedAuthoritiesBuilder;
 import org.apache.streampipes.user.management.util.GrantedPermissionsBuilder;
 
@@ -35,10 +38,13 @@ public abstract class PrincipalUserDetails<T extends Principal> implements UserD
   private Set<String> allAuthorities;
   private Set<String> allObjectPermissions;
 
-  public PrincipalUserDetails(T details) {
+  public PrincipalUserDetails(T details,
+                              IPermissionStorage permissionStorage,
+                              IRoleStorage roleStorage,
+                              IUserGroupStorage userGroupStorage) {
     this.details = details;
-    this.allAuthorities = new GrantedAuthoritiesBuilder(details).buildAllAuthorities();
-    this.allObjectPermissions = new GrantedPermissionsBuilder(details).buildAllPermissions();
+    this.allAuthorities = new GrantedAuthoritiesBuilder(details, roleStorage, userGroupStorage).buildAllAuthorities();
+    this.allObjectPermissions = new GrantedPermissionsBuilder(details, permissionStorage).buildAllPermissions();
   }
 
   public T getDetails() {

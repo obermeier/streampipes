@@ -59,31 +59,29 @@ public class PostStartupTask implements Runnable {
   private final WorkerAdministrationManagement workerAdministrationManagement;
   private final PostStartupRecovery postStartupRecovery;
   private final ExtensionServiceRequestManager extensionServiceRequestManager;
+  private final SpResourceManager resourceManager;
 
   private final INoSqlStorage storage = StorageDispatcher.INSTANCE.getNoSqlStore();
 
   public PostStartupTask(IPipelineStorage pipelineStorage,
                          ExtensionServiceRequestManager extensionServiceRequestManager,
-                         WorkerRestClient workerRestClient) {
+                         WorkerRestClient workerRestClient,
+                         SpResourceManager resourceManager) {
     this.pipelineStorage = pipelineStorage;
     this.extensionServiceRequestManager = extensionServiceRequestManager;
     this.executorService = Executors.newSingleThreadScheduledExecutor();
-    var resourceManager = new SpResourceManager();
+    this.resourceManager = resourceManager;
     this.workerAdministrationManagement = new WorkerAdministrationManagement(
         storage.getAdapterDescriptionStorage(),
-        storage.getPermissionStorage(),
-        resourceManager.manageUsers(),
-        resourceManager.managePermissions(),
+        resourceManager,
         extensionServiceRequestManager);
     this.postStartupRecovery = new PostStartupRecovery(
         new ExtensionHealthCheck(
             new ResourceProvider(
-                StorageDispatcher.INSTANCE.getNoSqlStore().getPipelineStorageAPI(),
-                StorageDispatcher.INSTANCE.getNoSqlStore().getAdapterInstanceStorage(),
+                resourceManager.managePipelines().getDb(),
+                resourceManager.manageAdapters().getDb(),
                 new AdapterMasterManagement(
-                    StorageDispatcher.INSTANCE.getNoSqlStore().getAdapterInstanceStorage(),
-                    new SpResourceManager().manageAdapters(),
-                    new SpResourceManager().manageDataStreams(),
+                    resourceManager,
                     AdapterMetricsManager.INSTANCE.getAdapterMetrics(),
                     workerRestClient,
                     StorageDispatcher.INSTANCE.getNoSqlStore().getExtensionsServiceStorage(),
@@ -91,14 +89,15 @@ public class PostStartupTask implements Runnable {
                 )
             ),
             StorageDispatcher.INSTANCE.getNoSqlStore().getExtensionsServiceStorage(),
-            extensionServiceRequestManager
+            extensionServiceRequestManager,
+            resourceManager
         )
     );
   }
 
   @Override
   public void run() {
-    new ServiceHealthCheck(storage.getExtensionsServiceStorage(), extensionServiceRequestManager).run();
+    new ServiceHealthCheck(storage.getExtensionsServiceStorage(), extensionServiceRequestManager, resourceManager).run();
     performAdapterAssetUpdate();
     startAllPreviouslyStoppedPipelines();
     runHealthCheckOnce();
@@ -134,15 +133,13 @@ public class PostStartupTask implements Runnable {
       startPipeline(pipeline, false);
     });
 
-    LOG.info("Checking for gracefully shut down pipelines to be restarted...");
-
     List<Pipeline> pipelinesToRestart = allPipelines
         .stream()
         .filter(p -> !(p.isRunning()))
         .filter(Pipeline::isRestartOnSystemReboot)
         .toList();
 
-    LOG.info("Found {} pipelines that we are attempting to restart...", pipelinesToRestart.size());
+    LOG.info("Found {} pipelines that will be restarted", pipelinesToRestart.size());
 
     pipelinesToRestart.forEach(pipeline -> {
       startPipeline(pipeline, false);
@@ -152,7 +149,8 @@ public class PostStartupTask implements Runnable {
   }
 
   private void startPipeline(Pipeline pipeline, boolean restartOnReboot) {
-    PipelineOperationStatus status = new PipelineExecutor(pipeline, extensionServiceRequestManager).startPipeline();
+    PipelineOperationStatus status = new PipelineExecutor(pipeline, extensionServiceRequestManager, resourceManager)
+        .startPipeline();
     if (status.isSuccess()) {
       LOG.info("Pipeline {} successfully restarted", status.getPipelineName());
       Pipeline storedPipeline = getPipelineStorage().getElementById(pipeline.getPipelineId());
@@ -162,7 +160,7 @@ public class PostStartupTask implements Runnable {
       storeFailedRestartAttempt(pipeline);
       int failedAttemptCount = failedPipelines.get(pipeline.getPipelineId());
       if (failedAttemptCount <= MAX_PIPELINE_START_RETRIES) {
-        LOG.error(
+        LOG.warn(
             "Pipeline {} could not be restarted - I'll try again in {} seconds ({}/{} failed attempts)",
             pipeline.getName(),
             WAIT_TIME_AFTER_FAILURE_IN_SECONDS,
@@ -172,7 +170,7 @@ public class PostStartupTask implements Runnable {
 
         schedulePipelineStart(pipeline, restartOnReboot);
       } else {
-        LOG.error(
+        LOG.warn(
             "Pipeline {} could not be restarted - are all pipeline element containers running?",
             status.getPipelineName()
         );
@@ -197,6 +195,6 @@ public class PostStartupTask implements Runnable {
   }
 
   private IPipelineStorage getPipelineStorage() {
-    return storage.getPipelineStorageAPI();
+    return resourceManager.managePipelines().getDb();
   }
 }

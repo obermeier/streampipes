@@ -22,6 +22,9 @@ export class AssetBtns {
     public static createAssetBtn() {
         return cy.dataCy('create-new-asset-button', { timeout: 10000 });
     }
+    public static createBtn() {
+        return cy.dataCy('sp-manage-save', { timeout: 10000 });
+    }
 
     public static assetNameInput() {
         return cy.dataCy('asset-name', { timeout: 10000 });
@@ -63,6 +66,10 @@ export class AssetBtns {
         return cy.dataCy('edit-asset-' + assetName, { timeout: 10000 });
     }
 
+    public static manageAssetBtn(assetName: string) {
+        return cy.dataCy('open-manage-' + assetName, { timeout: 10000 });
+    }
+
     public static deleteAssetBtn(assetName: string) {
         return cy.dataCy('delete-asset-' + assetName, { timeout: 10000 });
     }
@@ -93,11 +100,5 @@ export class AssetBtns {
 
     public static updateAssetLinksBtn() {
         return cy.dataCy('assets-update-links-button', { timeout: 10000 });
-    }
-
-    public static goBackToOverviewBtn() {
-        return cy.dataCy('save-data-explorer-go-back-to-overview', {
-            timeout: 10000,
-        });
     }
 }

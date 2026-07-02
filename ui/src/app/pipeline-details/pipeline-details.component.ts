@@ -16,11 +16,10 @@
  *
  */
 
-import { Component, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
+import { Component, inject, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../services/auth.service';
 import {
-    MeasurementUpdateAction,
     Pipeline,
     PipelineCanvasMetadata,
     PipelineCanvasMetadataService,
@@ -36,6 +35,7 @@ import {
     KeyboardShortcutService,
     PanelType,
     ShortcutRegistration,
+    SpBasicViewComponent,
     SpBreadcrumbService,
 } from '@streampipes/shared-ui';
 import { SpPipelineRoutes } from '../pipelines/pipelines.breadcrumb';
@@ -46,7 +46,6 @@ import { PipelinePreviewComponent } from './components/preview/pipeline-preview.
 import { HttpContext } from '@angular/common/http';
 import { NGX_LOADING_BAR_IGNORED } from '@ngx-loading-bar/http-client';
 import { PipelineCodeDialogComponent } from './dialogs/pipeline-code/pipeline-code-dialog.component';
-import { SpBasicViewComponent } from '@streampipes/shared-ui';
 import {
     FlexDirective,
     LayoutAlignDirective,
@@ -57,6 +56,7 @@ import { PipelineDetailsExpansionPanelComponent } from './components/pipeline-de
 import { TranslatePipe } from '@ngx-translate/core';
 import { PipelineOperationsService } from '../pipelines/services/pipeline-operations.service';
 import { MeasurementUpdateDialogComponent } from '../pipelines/dialog/measurement-update/measurement-update-dialog.component';
+import { MeasurementUpdateAction } from '../pipelines/model/pipeline-model';
 
 @Component({
     selector: 'sp-pipeline-details-overview-component',
@@ -104,7 +104,6 @@ export class SpPipelineDetailsComponent implements OnInit, OnDestroy {
     currentUser$: Subscription;
     autoRefresh$: Subscription;
     private shortcutReg: ShortcutRegistration;
-    private measurementUpdateDialogOpened = false;
 
     @ViewChild('pipelinePreviewComponent')
     pipelinePreviewComponent: PipelinePreviewComponent;
@@ -114,7 +113,7 @@ export class SpPipelineDetailsComponent implements OnInit, OnDestroy {
             { key: 'e', action: () => this.onShortcutEdit() },
         ]);
 
-        this.currentUser$ = this.currentUserService.user$.subscribe(user => {
+        this.currentUser$ = this.currentUserService.user$.subscribe(_user => {
             this.hasPipelineWritePrivileges = this.authService.hasRole(
                 UserPrivilege.PRIVILEGE_WRITE_PIPELINE,
             );
@@ -146,7 +145,7 @@ export class SpPipelineDetailsComponent implements OnInit, OnDestroy {
                         }
                         return response;
                     }),
-                    catchError(error => {
+                    catchError(_error => {
                         this.pipelineAvailable = false;
                         return of(new PipelineCanvasMetadata());
                     }),
@@ -174,18 +173,12 @@ export class SpPipelineDetailsComponent implements OnInit, OnDestroy {
             { label: this.pipeline.name },
             { label: 'Overview' },
         ]);
-        this.openMeasurementUpdateDialogIfRequired();
+        if (this.pipeline.healthStatus === 'HANDLE_MEASUREMENT_UPDATE') {
+            this.openMeasurementUpdateDialogIfRequired();
+        }
     }
 
     openMeasurementUpdateDialogIfRequired(): void {
-        if (
-            this.measurementUpdateDialogOpened ||
-            this.pipeline.healthStatus !== 'HANDLE_MEASUREMENT_UPDATE'
-        ) {
-            return;
-        }
-
-        this.measurementUpdateDialogOpened = true;
         const dialogRef = this.dialogService.open(
             MeasurementUpdateDialogComponent,
             {
@@ -284,7 +277,9 @@ export class SpPipelineDetailsComponent implements OnInit, OnDestroy {
 
     deletePipeline(): void {
         this.pipelineOperationsService.showDeleteDialog(
-            this.pipeline,
+            this.pipeline._id,
+            this.pipeline.name,
+            this.pipeline.running,
             null,
             () => this.router.navigate(['pipelines']),
         );

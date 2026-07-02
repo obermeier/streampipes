@@ -22,28 +22,81 @@ import { GeneralUtils } from '../GeneralUtils';
 import { Asset } from '../../model/Asset';
 import { Isa95Type } from '../../../../projects/streampipes/platform-services/src/lib/model/gen/streampipes-model';
 import { AssetBuilder } from '../../builder/AssetBuilder';
+import { PermissionUtils } from '../user/PermissionUtils';
 
 export class AssetUtils {
+    public static waitForAssets(
+        assetNames: string[],
+        attemptsRemaining: number = 40,
+    ): Cypress.Chainable<void> {
+        return cy.then(() => {
+            const token = window.localStorage.getItem('auth-token');
+
+            if (!token) {
+                throw new Error(
+                    'Waiting for assets requires an auth token. Call cy.login() first.',
+                );
+            }
+
+            return cy
+                .request<{ assetName: string }[]>({
+                    method: 'GET',
+                    url: '/streampipes-backend/api/v2/assets',
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                    },
+                })
+                .then(response => {
+                    const availableAssetNames = response.body.map(
+                        asset => asset.assetName,
+                    );
+                    const allAssetsAvailable = assetNames.every(assetName =>
+                        availableAssetNames.includes(assetName),
+                    );
+
+                    if (allAssetsAvailable) {
+                        return;
+                    }
+
+                    if (attemptsRemaining === 0) {
+                        const missingAssetNames = assetNames.filter(
+                            assetName =>
+                                !availableAssetNames.includes(assetName),
+                        );
+                        throw new Error(
+                            `Assets did not become available: ${missingAssetNames.join(', ')}`,
+                        );
+                    }
+
+                    return cy
+                        .wait(250, { log: false })
+                        .then(() =>
+                            this.waitForAssets(
+                                assetNames,
+                                attemptsRemaining - 1,
+                            ),
+                        );
+                });
+        });
+    }
+
     public static goToAssets() {
         cy.visit('#/assets/overview');
         cy.dataCy('asset-title').should('be.visible');
-    }
-
-    public static goBackToOverview() {
-        AssetBtns.goBackToOverviewBtn().click();
     }
 
     public static addAndSaveAsset(asset: Asset) {
         AssetUtils.addNewAsset(asset);
 
         AssetBtns.saveAssetBtn().click();
+        AssetBtns.createBtn().click();
+
         AssetBtns.createAssetBtn().should('be.visible');
     }
 
     public static addNewAsset(asset: Asset) {
         AssetBtns.createAssetBtn().click();
         AssetBtns.assetNameInput().clear().type(asset.name);
-        AssetBtns.createAssetPanelBtn().click();
 
         this.selectAssetType(asset.assetType);
         if (asset.site) {
@@ -130,6 +183,41 @@ export class AssetUtils {
         AssetBtns.editAssetBtn(assetName).should('not.exist');
     }
 
+    public static openManageAsset(assetName: string) {
+        GeneralUtils.openMenuForRow(assetName);
+        AssetBtns.manageAssetBtn(assetName).should('be.visible').click();
+    }
+
+    public static changeOwnership(assetName: string, email: string) {
+        AssetUtils.openManageAsset(assetName);
+        PermissionUtils.changeOwnershipInManageDialog(email);
+    }
+
+    public static markAsPublic(assetName: string) {
+        AssetUtils.openManageAsset(assetName);
+        PermissionUtils.markElementAsPublicInManageDialog();
+    }
+
+    public static authorizeUser(assetName: string, email: string) {
+        AssetUtils.openManageAsset(assetName);
+        PermissionUtils.authorizeUserInManageDialog(email);
+    }
+
+    public static authorizeGroup(assetName: string, groupName: string) {
+        AssetUtils.openManageAsset(assetName);
+        PermissionUtils.authorizeGroupInManageDialog(groupName);
+    }
+
+    public static validateUserCanChangePermissions(assetName: string) {
+        AssetUtils.openManageAsset(assetName);
+        PermissionUtils.validateUserCanChangePermissionsInManageDialog();
+    }
+
+    public static validateUserCanNotChangePermissions(assetName: string) {
+        AssetUtils.openManageAsset(assetName);
+        PermissionUtils.validateUserCanNotChangePermissionsInManageDialog();
+    }
+
     public static checkAmountOfAssetsGreaterThan(amount: number) {
         cy.dataCy('assets-table', { timeout: 10000 }).should(
             'have.length.greaterThan',
@@ -178,7 +266,12 @@ export class AssetUtils {
 
         AssetUtils.checkAmountOfLinkedResources(2);
         AssetBtns.saveAssetBtn().click();
-        AssetUtils.goBackToOverview();
+        AssetBtns.createBtn().click();
+        cy.location('hash', { timeout: 10000 }).should(
+            'include',
+            '/assets/overview',
+        );
+        AssetBtns.createAssetBtn().should('be.visible');
     }
 
     public static deleteAsset(assetName: string) {

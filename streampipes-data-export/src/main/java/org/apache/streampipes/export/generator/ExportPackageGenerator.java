@@ -30,10 +30,12 @@ import org.apache.streampipes.export.resolver.MeasurementResolver;
 import org.apache.streampipes.export.resolver.PipelineResolver;
 import org.apache.streampipes.manager.api.extensions.ExtensionServiceRequestManager;
 import org.apache.streampipes.manager.file.FileManager;
+import org.apache.streampipes.manager.pipeline.PipelineManager;
 import org.apache.streampipes.model.export.AssetExportConfiguration;
 import org.apache.streampipes.model.export.ExportConfiguration;
 import org.apache.streampipes.model.export.ExportItem;
 import org.apache.streampipes.model.export.StreamPipesApplicationPackage;
+import org.apache.streampipes.resource.management.SpResourceManager;
 import org.apache.streampipes.serializers.json.JacksonSerializer;
 import org.apache.streampipes.storage.management.StorageDispatcher;
 
@@ -46,8 +48,10 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -57,12 +61,18 @@ public class ExportPackageGenerator {
 
   private final ExportConfiguration exportConfiguration;
   private final ExtensionServiceRequestManager extensionServiceRequestManager;
-  private ObjectMapper defaultMapper;
+  private final ObjectMapper defaultMapper;
+  private final PipelineManager pipelineManager;
+  private final SpResourceManager resourceManager;
 
   public ExportPackageGenerator(ExportConfiguration exportConfiguration,
-                                ExtensionServiceRequestManager extensionServiceRequestManager) {
+                                ExtensionServiceRequestManager extensionServiceRequestManager,
+                                SpResourceManager resourceManager,
+                                PipelineManager pipelineManager) {
     this.exportConfiguration = exportConfiguration;
     this.extensionServiceRequestManager = extensionServiceRequestManager;
+    this.pipelineManager = pipelineManager;
+    this.resourceManager = resourceManager;
     this.defaultMapper = JacksonSerializer.getObjectMapper(Map.of(
       DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true,
       SerializationFeature.INDENT_OUTPUT, false 
@@ -72,6 +82,7 @@ public class ExportPackageGenerator {
   public byte[] generateExportPackage() throws IOException {
     ZipFileBuilder builder = ZipFileBuilder.create();
     var manifest = new StreamPipesApplicationPackage();
+    Set<String> exportedGenericStorageDocumentIds = new HashSet<>();
 
     addAssets(builder, exportConfiguration
         .getAssetExportConfiguration()
@@ -79,10 +90,15 @@ public class ExportPackageGenerator {
         .map(AssetExportConfiguration::getAssetId)
         .collect(Collectors.toList()), manifest);
 
+    var dashboardResourceManager = resourceManager.manageDashboards();
+    var pipelineResourceManager = resourceManager.managePipelines();
+    var datasetResourceManager = resourceManager.manageDataLakeMeasures();
+    var fileMetadataStorage = resourceManager.getFileMetadataStorage();
+
     this.exportConfiguration.getAssetExportConfiguration().forEach(config -> {
       config.getAdapters().forEach(item -> addDoc(builder,
           item,
-          new AdapterResolver(extensionServiceRequestManager),
+          new AdapterResolver(extensionServiceRequestManager, resourceManager),
           manifest::addAdapter));
 
       config.getDataSources().forEach(item -> addDoc(builder,
@@ -92,49 +108,77 @@ public class ExportPackageGenerator {
 
       config.getDataLakeMeasures().forEach(item -> addDoc(builder,
           item,
-          new MeasurementResolver(),
+          new MeasurementResolver(datasetResourceManager.getDb()),
           manifest::addDataLakeMeasure));
 
       config.getPipelines().forEach(item -> addDoc(builder,
           item,
-          new PipelineResolver(extensionServiceRequestManager),
+          new PipelineResolver(extensionServiceRequestManager, pipelineManager, pipelineResourceManager),
           manifest::addPipeline));
 
       config.getDashboards().forEach(item -> {
-        var resolver = new DashboardResolver();
+        var resolver = new DashboardResolver(dashboardResourceManager);
         addDoc(builder,
             item,
-            new DashboardResolver(),
+            new DashboardResolver(dashboardResourceManager),
             manifest::addDashboard);
         var charts = resolver.getCharts(item.getResourceId());
-        var chartResolver = new ChartResolver();
-        charts.forEach(widgetId -> addDoc(builder, widgetId, chartResolver, manifest::addDataViewWidget));
+        var chartResolver = new ChartResolver(resourceManager);
+        charts.forEach(widgetId -> addDoc(builder, widgetId, chartResolver, manifest::addDataView));
       });
 
       config.getDataViews().forEach(item -> {
         addDoc(builder,
             item,
-            new ChartResolver(),
+            new ChartResolver(resourceManager),
             manifest::addDataView);
       });
 
       config.getGenericStorageDocuments().forEach(item -> {
+        addGenericStorageDocument(builder,
+            item,
+            new GenericStorageDocumentResolver(),
+            manifest::addGenericStorageDocument,
+            exportedGenericStorageDocumentIds);
+      });
+
+      config.getLabels().forEach(item -> {
+        addDoc(builder, item, new GenericStorageDocumentResolver(), manifest::addGenericStorageDocument);
+      });
+
+      config.getSites().forEach(item -> {
         addDoc(builder, item, new GenericStorageDocumentResolver(), manifest::addGenericStorageDocument);
       });
 
       config.getFiles().forEach(item -> {
         if (item.isSelected()) {
-          var fileResolver = new FileResolver();
+          var fileResolver = new FileResolver(fileMetadataStorage);
           String filename = fileResolver.findDocument(item.getResourceId()).getFilename();
-          addDoc(builder, item, new FileResolver(), manifest::addFile);
+          addDoc(builder, item, new FileResolver(fileMetadataStorage), manifest::addFile);
           try {
-            builder.addBinary(filename, Files.readAllBytes(new FileManager().getFile(filename).toPath()));
+            builder.addBinary(filename, Files.readAllBytes(
+                new FileManager(
+                    resourceManager.getCoreConfigurationStorage(),
+                    resourceManager.getFileMetadataStorage()
+                ).getFile(filename).toPath())
+            );
           } catch (IOException e) {
             LOG.warn("Could not add binary file to export package: {}", e.getMessage());
           }
         }
       });
     });
+
+    if (exportConfiguration.getGenericStorageAppDocTypes() != null) {
+      exportConfiguration.getGenericStorageAppDocTypes().forEach(item -> {
+        if (item.isSelected()) {
+          addGenericStorageDocumentsByType(builder,
+              item.getResourceId(),
+              manifest::addGenericStorageDocument,
+              exportedGenericStorageDocumentIds);
+        }
+      });
+    }
 
     builder.addManifest(defaultMapper.writeValueAsString(manifest));
 
@@ -166,6 +210,36 @@ public class ExportPackageGenerator {
           exportItem.getResourceId(),
           resolver.getClass().getCanonicalName(),
           e);
+    }
+  }
+
+  private void addGenericStorageDocumentsByType(ZipFileBuilder builder,
+                                                String appDocType,
+                                                Consumer<String> function,
+                                                Set<String> exportedGenericStorageDocumentIds) {
+    var resolver = new GenericStorageDocumentResolver();
+
+    try {
+      StorageDispatcher.INSTANCE.getNoSqlStore()
+          .getGenericStorage()
+          .findAll(appDocType)
+          .forEach(document -> addGenericStorageDocument(builder,
+              resolver.convert(document),
+              resolver,
+              function,
+              exportedGenericStorageDocumentIds));
+    } catch (IOException e) {
+      LOG.warn("Could not load generic storage documents for appDocType {}", appDocType, e);
+    }
+  }
+
+  private void addGenericStorageDocument(ZipFileBuilder builder,
+                                         ExportItem exportItem,
+                                         AbstractResolver<?> resolver,
+                                         Consumer<String> function,
+                                         Set<String> exportedGenericStorageDocumentIds) {
+    if (exportedGenericStorageDocumentIds.add(exportItem.getResourceId())) {
+      addDoc(builder, exportItem, resolver, function);
     }
   }
 

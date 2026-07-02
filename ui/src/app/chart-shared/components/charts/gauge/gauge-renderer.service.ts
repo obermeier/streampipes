@@ -31,6 +31,7 @@ import {
 import { WidgetSize } from '../../../models/dataset.model';
 import { EchartsBasicOptionsGeneratorService } from '../../../echarts-renderer/echarts-basic-options-generator.service';
 import { SpFieldUpdateService } from '../../../services/field-update.service';
+import { ResultLabelService } from '../../../services/result-label.service';
 
 @Injectable({ providedIn: 'root' })
 export class SpGaugeRendererService implements SpEchartsRenderer<GaugeWidgetModel> {
@@ -38,10 +39,11 @@ export class SpGaugeRendererService implements SpEchartsRenderer<GaugeWidgetMode
     protected echartsBaseOptionsGenerator = inject(
         EchartsBasicOptionsGeneratorService,
     );
+    protected resultLabelService = inject(ResultLabelService);
 
     makeSeriesItem(
         seriesName: string,
-        fieldName: string,
+        selectedField: DataExplorerField,
         value: number,
         decimals: number | undefined,
         widgetConfig: GaugeWidgetModel,
@@ -49,12 +51,16 @@ export class SpGaugeRendererService implements SpEchartsRenderer<GaugeWidgetMode
         gaugeLayout: GaugeLayout,
     ): GaugeSeriesOption {
         const visConfig = widgetConfig.visualizationConfig;
-        const minDimension = Math.min(widgetSize.width, widgetSize.height);
-        const clamp = Math.min(Math.max(minDimension / 320, 0.7), 1.4);
+        const clamp = this.getSizeClamp(widgetSize);
         const useThresholdColors = !!visConfig.enableThresholdColors;
-        const displayName = this.makeDisplayName(
-            visConfig.displayName,
-            fieldName,
+        const displayName = this.resultLabelService.resolveLabel(
+            widgetConfig.dataConfig.sourceConfigs[selectedField.sourceIndex]
+                .queryConfig,
+            selectedField,
+            this.makeDisplayName(
+                visConfig.displayName,
+                selectedField.fullDbName,
+            ),
         );
 
         const series: GaugeSeriesOption = {
@@ -69,7 +75,7 @@ export class SpGaugeRendererService implements SpEchartsRenderer<GaugeWidgetMode
                 show: visConfig.showPointer,
             },
             progress: {
-                show: true,
+                show: !useThresholdColors,
             },
             axisLabel: {
                 fontSize: 10 * clamp,
@@ -93,17 +99,15 @@ export class SpGaugeRendererService implements SpEchartsRenderer<GaugeWidgetMode
         };
 
         if (useThresholdColors) {
-            const thresholdSegments = this.makeThresholdSegments(visConfig);
-            const progressColor = this.getProgressColor(value, visConfig);
-            series.progress = {
-                ...series.progress,
-                itemStyle: {
-                    color: progressColor,
-                },
-            };
             series.axisLine = {
                 lineStyle: {
-                    color: thresholdSegments,
+                    color: this.makeThresholdSegments(visConfig),
+                },
+            };
+            series.pointer = {
+                ...series.pointer,
+                itemStyle: {
+                    color: 'auto',
                 },
             };
         }
@@ -175,7 +179,7 @@ export class SpGaugeRendererService implements SpEchartsRenderer<GaugeWidgetMode
             },
             series: this.makeSeriesItem(
                 '',
-                selectedField.fullDbName,
+                selectedField,
                 data,
                 decimals,
                 widgetConfig,
@@ -258,19 +262,6 @@ export class SpGaugeRendererService implements SpEchartsRenderer<GaugeWidgetMode
         ];
     }
 
-    private getProgressColor(value: number, visConfig: GaugeVisConfig): string {
-        const normalizedThresholds = this.normalizeThresholds(visConfig);
-        if (value <= normalizedThresholds.low) {
-            return this.getLowColor(visConfig);
-        }
-
-        if (value <= normalizedThresholds.high) {
-            return this.getMediumColor(visConfig);
-        }
-
-        return this.getHighColor(visConfig);
-    }
-
     private normalizeThresholds(visConfig: GaugeVisConfig): {
         min: number;
         max: number;
@@ -302,6 +293,24 @@ export class SpGaugeRendererService implements SpEchartsRenderer<GaugeWidgetMode
             : { min, max, range, low: high, high: low };
     }
 
+    private normalizeSplitNumber(splitNumber: number): number {
+        return Math.max(1, Math.round(this.toFiniteNumber(splitNumber, 10)));
+    }
+
+    private getSizeClamp(widgetSize: WidgetSize): number {
+        const minDimension = Math.min(widgetSize.width, widgetSize.height);
+        return Math.min(Math.max(minDimension / 320, 0.7), 1.4);
+    }
+
+    private clamp(value: number, min: number, max: number): number {
+        return Math.min(max, Math.max(min, value));
+    }
+
+    private toFiniteNumber(value: unknown, fallback: number): number {
+        const parsedValue = Number(value);
+        return Number.isFinite(parsedValue) ? parsedValue : fallback;
+    }
+
     private getLowColor(visConfig: GaugeVisConfig): string {
         return visConfig.thresholdColorLow || '#91cc75';
     }
@@ -314,21 +323,8 @@ export class SpGaugeRendererService implements SpEchartsRenderer<GaugeWidgetMode
         return visConfig.thresholdColorHigh || '#ee6666';
     }
 
-    private normalizeSplitNumber(splitNumber: number): number {
-        return Math.max(1, Math.round(this.toFiniteNumber(splitNumber, 10)));
-    }
-
-    private clamp(value: number, min: number, max: number): number {
-        return Math.min(max, Math.max(min, value));
-    }
-
-    private toFiniteNumber(value: unknown, fallback: number): number {
-        const parsedValue = Number(value);
-        return Number.isFinite(parsedValue) ? parsedValue : fallback;
-    }
-
     private makeDisplayName(displayName: unknown, fallback: string): string {
-        if (typeof displayName === 'string' && displayName.trim().length > 0) {
+        if (typeof displayName === 'string') {
             return displayName;
         }
 

@@ -18,6 +18,7 @@
 
 package org.apache.streampipes.service.core.oauth2;
 
+import org.apache.streampipes.resource.management.SpResourceManager;
 import org.apache.streampipes.rest.security.OAuth2AuthenticationProcessingException;
 
 import org.springframework.security.core.AuthenticationException;
@@ -32,13 +33,19 @@ import java.util.HashMap;
 @Service
 public class CustomOAuth2UserService extends DefaultOAuth2UserService {
 
+  private final SpResourceManager resourceManager;
+
+  public CustomOAuth2UserService(SpResourceManager resourceManager) {
+    this.resourceManager = resourceManager;
+  }
+
   @Override
   public OAuth2User loadUser(OAuth2UserRequest oAuth2UserRequest) throws OAuth2AuthenticationException {
     OAuth2User oAuth2User = super.loadUser(oAuth2UserRequest);
     try {
       var attributes = new HashMap<>(oAuth2User.getAttributes());
       var provider = oAuth2UserRequest.getClientRegistration().getRegistrationId();
-      return new UserService().processUserRegistration(provider, attributes);
+      return new UserService(resourceManager).processUserRegistration(provider, attributes);
     } catch (AuthenticationException e) {
       throw e;
     } catch (Exception e) {

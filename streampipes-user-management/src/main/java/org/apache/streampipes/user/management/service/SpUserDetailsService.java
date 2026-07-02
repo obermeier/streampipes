@@ -20,7 +20,10 @@ package org.apache.streampipes.user.management.service;
 import org.apache.streampipes.model.client.user.Principal;
 import org.apache.streampipes.model.client.user.ServiceAccount;
 import org.apache.streampipes.model.client.user.UserAccount;
-import org.apache.streampipes.storage.management.StorageDispatcher;
+import org.apache.streampipes.storage.api.user.IPermissionStorage;
+import org.apache.streampipes.storage.api.user.IRoleStorage;
+import org.apache.streampipes.storage.api.user.IUserGroupStorage;
+import org.apache.streampipes.storage.api.user.IUserStorage;
 import org.apache.streampipes.user.management.model.ServiceAccountDetails;
 import org.apache.streampipes.user.management.model.UserAccountDetails;
 
@@ -30,10 +33,33 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 
 public class SpUserDetailsService implements UserDetailsService {
 
+  private final IPermissionStorage permissionStorage;
+  private final IRoleStorage roleStorage;
+  private final IUserGroupStorage userGroupStorage;
+  private final IUserStorage userStorage;
+
+  public SpUserDetailsService(IUserStorage userStorage,
+                              IPermissionStorage permissionStorage,
+                              IRoleStorage roleStorage,
+                              IUserGroupStorage userGroupStorage) {
+    this.userStorage = userStorage;
+    this.permissionStorage = permissionStorage;
+    this.roleStorage = roleStorage;
+    this.userGroupStorage = userGroupStorage;
+  }
+
   @Override
   public UserDetails loadUserByUsername(String s) throws UsernameNotFoundException {
-    Principal user = StorageDispatcher.INSTANCE.getNoSqlStore().getUserStorageAPI().getUser(s);
-    return user instanceof UserAccount ? new UserAccountDetails((UserAccount) user) :
-        new ServiceAccountDetails((ServiceAccount) user);
+    Principal user = userStorage.getUser(s);
+    if (user == null) {
+      throw new UsernameNotFoundException("User not found");
+    }
+    return user instanceof UserAccount ? new UserAccountDetails(
+        (UserAccount) user,
+        permissionStorage,
+        roleStorage,
+        userGroupStorage
+        ) :
+        new ServiceAccountDetails((ServiceAccount) user, permissionStorage, roleStorage, userGroupStorage);
   }
 }

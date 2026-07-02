@@ -36,6 +36,8 @@ services:
     image: streampipes_backend:release-validation
     environment:
       - SP_PRIORITIZED_PROTOCOL=nats
+      - SP_SETUP_PROMETHEUS_ENDPOINT=true
+      - SP_RESET_ENDPOINT_ENABLED=true
     depends_on:
       - couchdb
     volumes:
@@ -64,9 +66,9 @@ services:
 
   extensions-all-iiot:
     build:
-      context: ./streampipes-extensions/streampipes-extensions-all-iiot
+      context: ./streampipes-extensions/streampipes-extensions-all-jvm
       dockerfile: Dockerfile
-    image: streampipes_pipeline-elements-all-iiot:release-validation
+    image: streampipes-extensions-all-jvm:fix-teams-1.2
     logging: *default-logging
     networks:
       spnet:

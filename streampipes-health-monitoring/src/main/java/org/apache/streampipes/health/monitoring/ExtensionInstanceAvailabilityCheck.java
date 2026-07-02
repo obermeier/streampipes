@@ -23,6 +23,7 @@ import org.apache.streampipes.manager.api.extensions.ExtensionServiceRequestTarg
 import org.apache.streampipes.manager.api.extensions.ExtensionServiceRequests;
 import org.apache.streampipes.model.extensions.svcdiscovery.SpServiceRegistration;
 import org.apache.streampipes.model.health.ExtensionInstanceHealth;
+import org.apache.streampipes.resource.management.SpResourceManager;
 import org.apache.streampipes.serializers.json.JacksonSerializer;
 import org.apache.streampipes.storage.api.system.IExtensionsServiceStorage;
 
@@ -31,6 +32,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.Map;
 import java.util.Set;
 
 public class ExtensionInstanceAvailabilityCheck {
@@ -40,13 +42,16 @@ public class ExtensionInstanceAvailabilityCheck {
   private final IExtensionsServiceStorage extensionsServiceStorage;
   private final String serviceId;
   private final ExtensionServiceRequestManager extensionRequestManager;
+  private final SpResourceManager resourceManager;
 
   public ExtensionInstanceAvailabilityCheck(IExtensionsServiceStorage extensionsServiceStorage,
                                             String serviceId,
-                                            ExtensionServiceRequestManager extensionRequestManager) {
+                                            ExtensionServiceRequestManager extensionRequestManager,
+                                            SpResourceManager resourceManager) {
     this.extensionsServiceStorage = extensionsServiceStorage;
     this.serviceId = serviceId;
     this.extensionRequestManager = extensionRequestManager;
+    this.resourceManager = resourceManager;
   }
 
   public ExtensionInstanceHealth checkRunningInstances() {
@@ -56,20 +61,21 @@ public class ExtensionInstanceAvailabilityCheck {
           .findFirst();
 
       if (service.isEmpty()) {
-        return new ExtensionInstanceHealth(Set.of(), Set.of());
+        return new ExtensionInstanceHealth(Map.of(), Set.of());
       } else {
         var response = extensionRequestManager.request(
-            ExtensionServiceRequests.extensionInstanceHealth(makeRequestTarget(service.get()))
+            ExtensionServiceRequests
+                .extensionInstanceHealth(makeRequestTarget(service.get()), resourceManager)
         );
         if (response.statusCode() != 200) {
-          return new ExtensionInstanceHealth(Set.of(), Set.of());
+          return new ExtensionInstanceHealth(Map.of(), Set.of());
         }
         return deserialize(response.responseBody());
       }
 
     } catch (IOException e) {
       LOG.error("Extension service {} is unavailable", serviceId);
-      return new ExtensionInstanceHealth(Set.of(), Set.of());
+      return new ExtensionInstanceHealth(Map.of(), Set.of());
     }
   }
 

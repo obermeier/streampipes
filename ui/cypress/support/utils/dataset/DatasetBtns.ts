@@ -21,6 +21,10 @@ export class DatasetBtns {
         return cy.dataCy('datalake-settings', { timeout: 10000 });
     }
 
+    public static refreshDataLakeMeasures() {
+        return cy.dataCy('refresh-data-lake-measures', { timeout: 10000 });
+    }
+
     public static openCsvImportDialog() {
         return cy.dataCy('open-csv-import-dialog', { timeout: 10000 });
     }
@@ -111,15 +115,61 @@ export class DatasetBtns {
         });
     }
 
-    public static datasetTotalCountCell(name: string) {
-        return this.datasetRow(name).find(
-            '[data-cy="datalake-number-of-events"]',
-        );
+    public static datasetDetailsSchemaTable() {
+        return cy.dataCy('dataset-details-schema-table', { timeout: 10000 });
     }
 
-    public static datasetTotalCountButton(name: string) {
-        return this.datasetTotalCountCell(name).find(
-            '[data-cy="datalake-total-count-button"]',
-        );
+    public static datasetDetailsSchemaField(runtimeName: string) {
+        return cy.dataCy(`dataset-details-schema-field-${runtimeName}`, {
+            timeout: 10000,
+        });
+    }
+
+    public static datasetDetailsSchemaType(runtimeName: string) {
+        return cy.dataCy(`dataset-details-schema-type-${runtimeName}`, {
+            timeout: 10000,
+        });
+    }
+
+    public static datasetDetailsEventLimit() {
+        return cy.dataCy('dataset-details-event-limit', { timeout: 10000 });
+    }
+
+    public static datasetDetailsEventsTable() {
+        return cy.dataCy('dataset-details-events-table', { timeout: 30000 });
+    }
+
+    public static datasetDetailsEventCell(columnName: string) {
+        return cy.dataCy(`dataset-details-event-cell-${columnName}`, {
+            timeout: 30000,
+        });
+    }
+
+    public static datasetDetailsCreateChart() {
+        return cy.dataCy('dataset-details-create-chart', { timeout: 10000 });
+    }
+
+    public static datasetLastEventCell(name: string) {
+        return this.datasetRow(name).find('[data-cy="datalake-last-event"]');
+    }
+
+    public static datalakeLastEvent() {
+        return cy.dataCy('datalake-last-event', { timeout: 30000 });
+    }
+
+    public static dataLakeTruncateBtn() {
+        return cy.dataCy('datalake-truncate-btn');
+    }
+
+    public static dataLakeDeleteBtn() {
+        return cy.dataCy('datalake-delete-btn');
+    }
+
+    public static confirmDataLakeTruncateBtn() {
+        return cy.dataCy('confirm-truncate-data-btn', { timeout: 10000 });
+    }
+
+    public static confirmDataLakeDeleteBtn() {
+        return cy.dataCy('confirm-delete-data-btn', { timeout: 10000 });
     }
 }

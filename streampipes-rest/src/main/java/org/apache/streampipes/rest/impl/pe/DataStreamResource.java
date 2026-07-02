@@ -19,17 +19,25 @@
 package org.apache.streampipes.rest.impl.pe;
 
 import org.apache.streampipes.manager.api.extensions.ExtensionServiceRequestManager;
+import org.apache.streampipes.manager.pipeline.PipelineManager;
+import org.apache.streampipes.manager.pipeline.update.ChartSchemaUpdateCoordinator;
 import org.apache.streampipes.manager.pipeline.update.DataStreamUpdateManagement;
+import org.apache.streampipes.manager.pipeline.update.PipelineUpdateCoordinator;
 import org.apache.streampipes.model.SpDataStream;
 import org.apache.streampipes.model.connect.adapter.PipelineUpdateInfo;
 import org.apache.streampipes.model.message.Message;
 import org.apache.streampipes.model.message.NotificationType;
 import org.apache.streampipes.model.monitoring.SpLogMessage;
 import org.apache.streampipes.resource.management.DataStreamResourceManager;
+import org.apache.streampipes.resource.management.SpResourceManager;
 import org.apache.streampipes.rest.core.base.impl.AbstractAuthGuardedRestResource;
+import org.apache.streampipes.rest.event.DataStreamDeletedEvent;
+import org.apache.streampipes.rest.event.DataStreamUpdatedEvent;
 import org.apache.streampipes.rest.security.AuthConstants;
+import org.apache.streampipes.storage.api.explorer.IChartStorage;
 
 import org.apache.http.client.HttpResponseException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PostFilter;
@@ -50,29 +58,45 @@ import java.util.List;
 public class DataStreamResource extends AbstractAuthGuardedRestResource {
 
   private final DataStreamUpdateManagement dataStreamUpdateManagement;
+  private final ApplicationEventPublisher eventPublisher;
+  private final DataStreamResourceManager dataStreamResourceManager;
 
-  public DataStreamResource(ExtensionServiceRequestManager requestManager) {
-    this.dataStreamUpdateManagement = new DataStreamUpdateManagement(requestManager);
+  public DataStreamResource(ExtensionServiceRequestManager requestManager,
+                            ApplicationEventPublisher eventPublisher,
+                            IChartStorage chartStorage,
+                            SpResourceManager resourceManager) {
+    var pipelineUpdateCoordinator = new PipelineUpdateCoordinator(
+        requestManager,
+        resourceManager,
+        new ChartSchemaUpdateCoordinator(chartStorage),
+        new PipelineManager(resourceManager)
+    );
+    this.dataStreamResourceManager = resourceManager.manageDataStreams();
+    this.dataStreamUpdateManagement = new DataStreamUpdateManagement(
+        pipelineUpdateCoordinator, dataStreamResourceManager
+    );
+    this.eventPublisher = eventPublisher;
   }
 
   @GetMapping(path = "/available", produces = MediaType.APPLICATION_JSON_VALUE)
   @PreAuthorize(AuthConstants.HAS_READ_PIPELINE_ELEMENT_PRIVILEGE)
   @PostFilter("hasPermission(filterObject.elementId, 'READ')")
   public List<SpDataStream> getAvailable() {
-    return getDataStreamResourceManager().findAll();
+    return dataStreamResourceManager.findAll();
   }
 
   @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
   @PreAuthorize(AuthConstants.HAS_READ_PIPELINE_ELEMENT_PRIVILEGE)
   @PostFilter("hasPermission(filterObject.elementId, 'READ')")
   public List<SpDataStream> get() {
-    return getDataStreamResourceManager().findAllAsInvocation();
+    return dataStreamResourceManager.findAllAsInvocation();
   }
 
   @DeleteMapping(path = "/{elementId}", produces = MediaType.APPLICATION_JSON_VALUE)
   @PreAuthorize(AuthConstants.HAS_WRITE_PIPELINE_ELEMENT_PRIVILEGE)
   public ResponseEntity<Message> delete(@PathVariable("elementId") String elementId) {
-    getDataStreamResourceManager().delete(elementId);
+    publishEvent(new DataStreamDeletedEvent(elementId));
+    dataStreamResourceManager.delete(elementId);
     return constructSuccessMessage(NotificationType.STORAGE_SUCCESS.uiNotification());
   }
 
@@ -80,7 +104,7 @@ public class DataStreamResource extends AbstractAuthGuardedRestResource {
   @PreAuthorize(AuthConstants.HAS_READ_PIPELINE_ELEMENT_PRIVILEGE)
   public ResponseEntity<?> getElement(@PathVariable("elementId") String elementId) {
     try {
-      return ok(getDataStreamResourceManager().findAsInvocation(elementId));
+      return ok(dataStreamResourceManager.findAsInvocation(elementId));
     } catch (IllegalArgumentException e) {
       return notFound(SpLogMessage.from(e));
     }
@@ -95,6 +119,7 @@ public class DataStreamResource extends AbstractAuthGuardedRestResource {
           "Element ID in path variable does not match element ID in request body");
     } else {
       dataStreamUpdateManagement.updateDataStream(updatedElement);
+      publishEvent(new DataStreamUpdatedEvent(updatedElement));
       return constructSuccessMessage(NotificationType.STORAGE_SUCCESS.uiNotification());
     }
   }
@@ -117,15 +142,17 @@ public class DataStreamResource extends AbstractAuthGuardedRestResource {
   @PreAuthorize(AuthConstants.HAS_WRITE_PIPELINE_ELEMENT_PRIVILEGE)
   public ResponseEntity<?> addDataStream(@RequestBody SpDataStream dataStream) {
     try {
-      getDataStreamResourceManager().add(dataStream, getAuthenticatedUserSid());
+      dataStreamResourceManager.add(dataStream, getAuthenticatedUserSid());
       return ok();
     } catch (IllegalArgumentException e) {
       return badRequest(e.getMessage());
     }
   }
 
-  private DataStreamResourceManager getDataStreamResourceManager() {
-    return getSpResourceManager().manageDataStreams();
+  private void publishEvent(Object event) {
+    if (eventPublisher != null) {
+      eventPublisher.publishEvent(event);
+    }
   }
 
 }

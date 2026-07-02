@@ -22,8 +22,8 @@ import org.apache.streampipes.commons.prometheus.pipelines.PipelinesStats;
 import org.apache.streampipes.manager.execution.PipelineExecutionInfo;
 import org.apache.streampipes.model.pipeline.Pipeline;
 import org.apache.streampipes.model.pipeline.PipelineHealthStatus;
+import org.apache.streampipes.resource.management.SpResourceManager;
 import org.apache.streampipes.storage.api.pipeline.IPipelineStorage;
-import org.apache.streampipes.storage.management.StorageDispatcher;
 
 import org.lightcouch.DocumentConflictException;
 import org.slf4j.Logger;
@@ -39,11 +39,14 @@ public class StorePipelineStatusTask implements PipelineExecutionTask {
   private final boolean start;
   private final boolean forceStop;
   private final PipelinesStats pipelinesStats = new PipelinesStats();
+  private final IPipelineStorage pipelineStorage;
 
-  public StorePipelineStatusTask(boolean start,
+  public StorePipelineStatusTask(SpResourceManager resourceManager,
+                                 boolean start,
                                  boolean forceStop) {
     this.start = start;
     this.forceStop = forceStop;
+    this.pipelineStorage = resourceManager.managePipelines().getDb();
   }
 
   @Override
@@ -70,7 +73,7 @@ public class StorePipelineStatusTask implements PipelineExecutionTask {
                                                                   ,  true);
     pipelinesStats.updatePipelineHealthState(pipeline.getElementId(),pipeline.getName(), pipeline.getHealthStatus().toString());
     try {
-      getPipelineStorageApi().updateElement(pipeline);
+      pipelineStorage.updateElement(pipeline);
     } catch (DocumentConflictException dce) {
       LOG.error("Could not update pipeline {}", pipeline.getPipelineId(), dce);
     }
@@ -80,11 +83,19 @@ public class StorePipelineStatusTask implements PipelineExecutionTask {
     pipeline.setRunning(false);
     pipelinesStats.updatePipelineRunningState(pipeline.getElementId(),pipeline.getName()
                                                                   , false);
-    pipelinesStats.updatePipelineHealthState(pipeline.getElementId(),pipeline.getName(), pipeline.getHealthStatus().toString());
-    getPipelineStorageApi().updateElement(pipeline);
+    pipelinesStats.updatePipelineHealthState(
+        pipeline.getElementId(),
+        pipeline.getName(),
+        getHealthStatus(pipeline).toString()
+    );
+    pipelineStorage.updateElement(pipeline);
   }
 
-  private IPipelineStorage getPipelineStorageApi() {
-    return StorageDispatcher.INSTANCE.getNoSqlStore().getPipelineStorageAPI();
+  private PipelineHealthStatus getHealthStatus(Pipeline pipeline) {
+    if (pipeline.getHealthStatus() == null) {
+      pipeline.setHealthStatus(PipelineHealthStatus.OK);
+    }
+
+    return pipeline.getHealthStatus();
   }
 }

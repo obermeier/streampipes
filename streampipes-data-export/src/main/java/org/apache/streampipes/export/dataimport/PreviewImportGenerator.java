@@ -27,8 +27,11 @@ import org.apache.streampipes.export.resolver.FileResolver;
 import org.apache.streampipes.export.resolver.MeasurementResolver;
 import org.apache.streampipes.export.resolver.PipelineResolver;
 import org.apache.streampipes.manager.api.extensions.ExtensionServiceRequestManager;
+import org.apache.streampipes.manager.pipeline.PipelineManager;
 import org.apache.streampipes.model.export.AssetExportConfiguration;
 import org.apache.streampipes.model.export.ExportItem;
+import org.apache.streampipes.resource.management.SpResourceManager;
+import org.apache.streampipes.storage.api.explorer.IDataLakeMeasureStorage;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -41,13 +44,23 @@ import java.util.function.Consumer;
 public class PreviewImportGenerator extends ImportGenerator<AssetExportConfiguration> {
 
   private static final Logger LOG = LoggerFactory.getLogger(PreviewImportGenerator.class);
+  private static final String LABEL_FIELD = "label";
+
   private final AssetExportConfiguration importConfig;
   private final ExtensionServiceRequestManager extensionServiceRequestManager;
+  private final PipelineManager pipelineManager;
+  private final SpResourceManager resourceManager;
+  private final IDataLakeMeasureStorage datasetStorage;
 
-  public PreviewImportGenerator(ExtensionServiceRequestManager extensionServiceRequestManager) {
+  public PreviewImportGenerator(ExtensionServiceRequestManager extensionServiceRequestManager,
+                                SpResourceManager resourceManager,
+                                PipelineManager pipelineManager) {
     super();
     this.importConfig = new AssetExportConfiguration();
     this.extensionServiceRequestManager = extensionServiceRequestManager;
+    this.pipelineManager = pipelineManager;
+    this.resourceManager = resourceManager;
+    this.datasetStorage = resourceManager.manageDataLakeMeasures().getDb();
 
   }
 
@@ -73,7 +86,8 @@ public class PreviewImportGenerator extends ImportGenerator<AssetExportConfigura
     try {
       addExportItem(
           adapterId,
-          new AdapterResolver(extensionServiceRequestManager).readDocument(document).getName(),
+          new AdapterResolver(extensionServiceRequestManager, resourceManager)
+              .readDocument(document).getName(),
           importConfig::addAdapter
       );
     } catch (IllegalArgumentException e) {
@@ -85,14 +99,16 @@ public class PreviewImportGenerator extends ImportGenerator<AssetExportConfigura
   protected void handleChart(String document, String dataViewId) throws JsonProcessingException {
     addExportItem(
         dataViewId,
-        new ChartResolver().readDocument(document).getBaseAppearanceConfig().get("widgetTitle").toString(),
+        new ChartResolver(resourceManager).readDocument(document).getBaseAppearanceConfig().get("widgetTitle").toString(),
         importConfig::addDataView
     );
   }
 
   @Override
   protected void handleDashboard(String document, String dashboardId) throws JsonProcessingException {
-    addExportItem(dashboardId, new DashboardResolver().readDocument(document).getName(), importConfig::addDashboard);
+    addExportItem(dashboardId, new DashboardResolver(
+        resourceManager.manageDashboards()
+    ).readDocument(document).getName(), importConfig::addDashboard);
   }
 
   @Override
@@ -102,13 +118,14 @@ public class PreviewImportGenerator extends ImportGenerator<AssetExportConfigura
 
   @Override
   protected void handlePipeline(String document, String pipelineId) throws JsonProcessingException {
-    addExportItem(pipelineId, new PipelineResolver(extensionServiceRequestManager)
+    addExportItem(pipelineId,
+        new PipelineResolver(extensionServiceRequestManager, pipelineManager, resourceManager.managePipelines())
         .readDocument(document).getName(), importConfig::addPipeline);
   }
 
   @Override
   protected void handleDataLakeMeasure(String document, String measurementId) throws JsonProcessingException {
-    addExportItem(measurementId, new MeasurementResolver().readDocument(document).getMeasureName(),
+    addExportItem(measurementId, new MeasurementResolver(datasetStorage).readDocument(document).getMeasureName(),
         importConfig::addDataLakeMeasure);
   }
 
@@ -116,12 +133,25 @@ public class PreviewImportGenerator extends ImportGenerator<AssetExportConfigura
   protected void handleFile(String document,
                             String fileMetadataId,
                             Map<String, byte[]> zipContent) throws JsonProcessingException {
-    addExportItem(fileMetadataId, new FileResolver().readDocument(document).getFilename(),
+    addExportItem(fileMetadataId, new FileResolver(resourceManager.getFileMetadataStorage())
+            .readDocument(document).getFilename(),
         importConfig::addFile);
   }
 
   @Override
-  protected void handleGenericStorageDocument(String document, String genericDocId) throws JsonProcessingException {
+  protected void handleLabel(String document, String labelId) throws JsonProcessingException {
+    addExportItem(labelId, getGenericStorageDocumentLabel(document, labelId),
+        importConfig::addLabel);
+  }
+
+  @Override
+  protected void handleSite(String document, String siteId) throws JsonProcessingException {
+    addExportItem(siteId, getGenericStorageDocumentLabel(document, siteId),
+        importConfig::addSite);
+  }
+
+  @Override
+  protected void handleGenericStorageDocument(String document, String genericDocId) {
     addExportItem(genericDocId, genericDocId, importConfig::addGenericStorageDocument);
   }
 
@@ -132,5 +162,11 @@ public class PreviewImportGenerator extends ImportGenerator<AssetExportConfigura
 
   @Override
   protected void afterResourcesCreated() {
+  }
+
+  private String getGenericStorageDocumentLabel(String document, String genericDocId) throws JsonProcessingException {
+    Map<String, Object> genericStorageDocument = this.defaultMapper.readValue(document, new TypeReference<>() {
+    });
+    return String.valueOf(genericStorageDocument.getOrDefault(LABEL_FIELD, genericDocId));
   }
 }

@@ -22,6 +22,20 @@ import org.apache.streampipes.connect.management.management.WorkerRestClient;
 import org.apache.streampipes.manager.api.extensions.ExtensionServiceRequestManager;
 import org.apache.streampipes.manager.execution.HttpExtensionServiceRequestManager;
 import org.apache.streampipes.model.extensions.transport.ExtensionServiceBrokerTopics;
+import org.apache.streampipes.resource.management.SpResourceManager;
+import org.apache.streampipes.storage.api.connect.IAdapterStorage;
+import org.apache.streampipes.storage.api.explorer.IChartStorage;
+import org.apache.streampipes.storage.api.explorer.IDashboardStorage;
+import org.apache.streampipes.storage.api.explorer.IDataLakeMeasureStorage;
+import org.apache.streampipes.storage.api.pipeline.IPipelineStorage;
+import org.apache.streampipes.storage.api.system.IAssetStorage;
+import org.apache.streampipes.storage.api.system.IFileMetadataStorage;
+import org.apache.streampipes.storage.api.system.ISpCoreConfigurationStorage;
+import org.apache.streampipes.storage.api.user.IPermissionStorage;
+import org.apache.streampipes.storage.api.user.IPrivilegeStorage;
+import org.apache.streampipes.storage.api.user.IRoleStorage;
+import org.apache.streampipes.storage.api.user.IUserGroupStorage;
+import org.apache.streampipes.storage.api.user.IUserStorage;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -82,7 +96,39 @@ public class ExtensionServiceRequestConfiguration {
   }
 
   @Bean
-  public WorkerRestClient workerRestClient(ExtensionServiceRequestManager extensionServiceRequestManager) {
-    return new WorkerRestClient(extensionServiceRequestManager);
+  public SpResourceManager spResourceManager(IPermissionStorage permissionStorage,
+                                             IChartStorage chartStorage,
+                                             IAdapterStorage adapterStorage,
+                                             IDashboardStorage dashboardStorage,
+                                             IAssetStorage assetStorage,
+                                             IPipelineStorage pipelineStorage,
+                                             IDataLakeMeasureStorage datasetStorage,
+                                             ISpCoreConfigurationStorage coreConfigurationStorage,
+                                             IFileMetadataStorage fileMetadataStorage,
+                                             IRoleStorage roleStorage,
+                                             IUserGroupStorage userGroupStorage,
+                                             IPrivilegeStorage privilegeStorage,
+                                             IUserStorage userStorage) {
+    return new SpResourceManager(
+        permissionStorage,
+        chartStorage,
+        adapterStorage,
+        assetStorage,
+        dashboardStorage,
+        pipelineStorage,
+        datasetStorage,
+        coreConfigurationStorage,
+        fileMetadataStorage,
+        roleStorage,
+        userGroupStorage,
+        privilegeStorage,
+        userStorage
+    );
+  }
+
+  @Bean
+  public WorkerRestClient workerRestClient(ExtensionServiceRequestManager extensionServiceRequestManager,
+                                           SpResourceManager resourceManager) {
+    return new WorkerRestClient(extensionServiceRequestManager, resourceManager);
   }
 }

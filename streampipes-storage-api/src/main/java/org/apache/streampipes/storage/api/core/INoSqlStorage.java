@@ -18,9 +18,6 @@
 package org.apache.streampipes.storage.api.core;
 
 import org.apache.streampipes.storage.api.connect.IAdapterStorage;
-import org.apache.streampipes.storage.api.explorer.IDataExplorerDashboardStorage;
-import org.apache.streampipes.storage.api.explorer.IDataExplorerWidgetStorage;
-import org.apache.streampipes.storage.api.explorer.IDataLakeMeasureStorage;
 import org.apache.streampipes.storage.api.pipeline.ICompactPipelineTemplateStorage;
 import org.apache.streampipes.storage.api.pipeline.IDataProcessorStorage;
 import org.apache.streampipes.storage.api.pipeline.IDataSinkStorage;
@@ -28,56 +25,29 @@ import org.apache.streampipes.storage.api.pipeline.IDataStreamStorage;
 import org.apache.streampipes.storage.api.pipeline.IPipelineCanvasMetadataStorage;
 import org.apache.streampipes.storage.api.pipeline.IPipelineElementDescriptionStorage;
 import org.apache.streampipes.storage.api.pipeline.IPipelineElementTemplateStorage;
-import org.apache.streampipes.storage.api.pipeline.IPipelineStorage;
-import org.apache.streampipes.storage.api.system.IAssetStorage;
 import org.apache.streampipes.storage.api.system.ICertificateStorage;
 import org.apache.streampipes.storage.api.system.IExtensionsServiceConfigurationStorage;
 import org.apache.streampipes.storage.api.system.IExtensionsServiceStorage;
-import org.apache.streampipes.storage.api.system.IFileMetadataStorage;
 import org.apache.streampipes.storage.api.system.IGenericStorage;
 import org.apache.streampipes.storage.api.system.IImageStorage;
-import org.apache.streampipes.storage.api.system.ISpCoreConfigurationStorage;
 import org.apache.streampipes.storage.api.system.ITransformationScriptTemplateStorage;
 import org.apache.streampipes.storage.api.user.IPasswordRecoveryTokenStorage;
-import org.apache.streampipes.storage.api.user.IPermissionStorage;
-import org.apache.streampipes.storage.api.user.IPrivilegeStorage;
 import org.apache.streampipes.storage.api.user.IRefreshTokenStorage;
-import org.apache.streampipes.storage.api.user.IRoleStorage;
 import org.apache.streampipes.storage.api.user.IUserActivationTokenStorage;
-import org.apache.streampipes.storage.api.user.IUserGroupStorage;
-import org.apache.streampipes.storage.api.user.IUserStorage;
 
 public interface INoSqlStorage {
 
   IGenericStorage getGenericStorage();
 
-  IAdapterStorage getAdapterInstanceStorage();
-
   IAdapterStorage getAdapterDescriptionStorage();
 
   IImageStorage getImageStorage();
-
-  IUserGroupStorage getUserGroupStorage();
-
-  IPipelineStorage getPipelineStorageAPI();
-
-  IUserStorage getUserStorageAPI();
-
-  IDataLakeMeasureStorage getDataLakeStorage();
-
-  IFileMetadataStorage getFileMetadataStorage();
-
-  IDataExplorerDashboardStorage getDataExplorerDashboardStorage();
-
-  IDataExplorerWidgetStorage getDataExplorerWidgetStorage();
 
   IPipelineElementTemplateStorage getPipelineElementTemplateStorage();
 
   IPipelineCanvasMetadataStorage getPipelineCanvasMetadataStorage();
 
   IPipelineElementDescriptionStorage getPipelineElementDescriptionStorage();
-
-  IPermissionStorage getPermissionStorage();
 
   IDataProcessorStorage getDataProcessorStorage();
 
@@ -95,17 +65,9 @@ public interface INoSqlStorage {
 
   IExtensionsServiceConfigurationStorage getExtensionsServiceConfigurationStorage();
 
-  ISpCoreConfigurationStorage getSpCoreConfigurationStorage();
-
-  IRoleStorage getRoleStorage();
-
-  IPrivilegeStorage getPrivilegeStorage();
-
   ICompactPipelineTemplateStorage getPipelineTemplateStorage();
 
   ICertificateStorage getCertificateStorage();
-
-  IAssetStorage getAssetStorage();
 
   ITransformationScriptTemplateStorage getTransformationScriptTemplateStorage();
 }
