@@ -19,7 +19,6 @@
 package org.apache.streampipes.connect.iiot.protocol.stream;
 
 import org.apache.streampipes.commons.exceptions.connect.AdapterException;
-import org.apache.streampipes.commons.exceptions.connect.ParseException;
 import org.apache.streampipes.extensions.api.connect.IAdapterConfiguration;
 import org.apache.streampipes.extensions.api.connect.IEventCollector;
 import org.apache.streampipes.extensions.api.connect.IParser;
@@ -35,112 +34,64 @@ import org.apache.streampipes.extensions.management.connect.adapter.util.Polling
 import org.apache.streampipes.model.connect.guess.SampleData;
 import org.apache.streampipes.model.extensions.ExtensionAssetType;
 import org.apache.streampipes.model.staticproperty.CollectionStaticProperty;
-import org.apache.streampipes.model.staticproperty.StaticProperty;
+import org.apache.streampipes.model.staticproperty.FreeTextStaticProperty;
+import org.apache.streampipes.model.staticproperty.StaticPropertyAlternative;
+import org.apache.streampipes.model.staticproperty.StaticPropertyAlternatives;
 import org.apache.streampipes.model.staticproperty.StaticPropertyGroup;
 import org.apache.streampipes.sdk.StaticProperties;
 import org.apache.streampipes.sdk.builder.adapter.AdapterConfigurationBuilder;
 import org.apache.streampipes.sdk.extractor.StaticPropertyExtractor;
+import org.apache.streampipes.sdk.helpers.Alternatives;
 import org.apache.streampipes.sdk.helpers.Labels;
 import org.apache.streampipes.sdk.helpers.Locales;
 
-import org.apache.http.client.fluent.Request;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 public class HttpStreamProtocol implements StreamPipesAdapter, IPullAdapter {
 
-  private static final Logger logger = LoggerFactory.getLogger(HttpStreamProtocol.class);
-
   public static final String ID = "org.apache.streampipes.connect.iiot.protocol.stream.http";
 
-  private static final String URL_PROPERTY = "url";
-  private static final String INTERVAL_PROPERTY = "interval";
+  public static final String HTTP_METHOD = "http-method";
   public static final String HEADER_COLLECTION = "header-collection";
   public static final String HEADER_KEY = "header-key";
   public static final String HEADER_VALUE = "header-value";
 
-  private String url;
-  private List<HeaderConfiguration> headerConfigurations = new ArrayList<>();
+  static final String URL_PROPERTY = "url";
+  static final String INTERVAL_PROPERTY = "interval";
 
+  private static final HttpMethod DEFAULT_METHOD = HttpMethod.GET;
+
+  private final HttpStreamClient client;
+
+  private HttpRequestConfig requestConfig;
   private PollingSettings pollingSettings;
   private PullAdapterScheduler pullAdapterScheduler;
-
   private IEventCollector collector;
   private IParser parser;
 
   public HttpStreamProtocol() {
+    this(new HttpStreamClient());
   }
 
-  private void applyConfiguration(IStaticPropertyExtractor extractor) {
-    this.url = extractor.singleValueParameter(URL_PROPERTY, String.class);
-    int interval = extractor.singleValueParameter(INTERVAL_PROPERTY, Integer.class);
-    this.pollingSettings = PollingSettings.from(TimeUnit.SECONDS, interval);
-    this.headerConfigurations = getHeaderConfigurations(extractor);
-  }
-
-  private InputStream getDataFromEndpoint() throws ParseException {
-
-    try {
-      Request request = Request.Get(url)
-          .connectTimeout(1000)
-          .socketTimeout(100000);
-
-      for (HeaderConfiguration header : headerConfigurations) {
-        if (header.headerKey != null && !header.headerKey.isBlank()) {
-          request.addHeader(header.headerKey, header.headerValue == null ? "" : header.headerValue);
-        }
-      }
-
-      var result = request
-          .execute().returnContent().asStream();
-
-      if (result == null) {
-        throw new ParseException("Could not receive Data from file: " + url);
-      } else {
-        return result;
-      }
-
-    } catch (IOException e) {
-      logger.error("Error while fetching data from URL: " + url, e);
-      throw new ParseException("Error while fetching data from URL: " + url);
-    }
+  HttpStreamProtocol(HttpStreamClient client) {
+    this.client = client;
   }
 
   @Override
   public IAdapterConfiguration declareConfig() {
-    var headerKey = StaticProperties.stringFreeTextProperty(
-        Labels.withId(HEADER_KEY)
-    );
-    headerKey.setOptional(true);
-    headerKey.setValue("");
-
-    var headerValue = StaticProperties.stringFreeTextProperty(
-        Labels.withId(HEADER_VALUE)
-    );
-    headerValue.setOptional(true);
-    headerValue.setValue("");
-
     return AdapterConfigurationBuilder
-        .create(ID, 1, HttpStreamProtocol::new)
+        .create(ID, 2, HttpStreamProtocol::new)
         .withSupportedParsers(Parsers.defaultParsers())
         .withAssets(ExtensionAssetType.DOCUMENTATION, ExtensionAssetType.ICON)
         .withLocales(Locales.EN)
         .requiredTextParameter(Labels.withId(URL_PROPERTY))
         .requiredIntegerParameter(Labels.withId(INTERVAL_PROPERTY))
-        .requiredStaticProperty(
-            StaticProperties.collection(
-                Labels.withId(HEADER_COLLECTION),
-                false,
-                headerKey,
-                headerValue
-            )
-        )
+        .requiredStaticProperty(httpMethodSelection())
+        .requiredStaticProperty(headerCollection())
         .buildConfiguration();
   }
 
@@ -148,9 +99,13 @@ public class HttpStreamProtocol implements StreamPipesAdapter, IPullAdapter {
   public void onAdapterStarted(IAdapterParameterExtractor extractor,
                                IEventCollector collector,
                                IAdapterRuntimeContext adapterRuntimeContext) throws AdapterException {
-    this.applyConfiguration(extractor.getStaticPropertyExtractor());
+    var staticProperties = extractor.getStaticPropertyExtractor();
+    this.requestConfig = toRequestConfig(staticProperties);
+    this.pollingSettings = PollingSettings.from(
+        TimeUnit.SECONDS,
+        staticProperties.singleValueParameter(INTERVAL_PROPERTY, Integer.class)
+    );
     this.parser = extractor.selectedParser();
-
     this.collector = collector;
     this.pullAdapterScheduler = new PullAdapterScheduler();
     this.pullAdapterScheduler.schedule(this, extractor.getAdapterDescription().getElementId());
@@ -159,24 +114,22 @@ public class HttpStreamProtocol implements StreamPipesAdapter, IPullAdapter {
   @Override
   public void onAdapterStopped(IAdapterParameterExtractor extractor,
                                IAdapterRuntimeContext adapterRuntimeContext) {
-    this.pullAdapterScheduler.shutdown();
+    if (pullAdapterScheduler != null) {
+      pullAdapterScheduler.shutdown();
+    }
   }
 
   @Override
   public SampleData onSampleDataRequested(IAdapterParameterExtractor extractor,
-                                      IAdapterGuessSchemaContext adapterGuessSchemaContext) throws AdapterException {
-    this.applyConfiguration(extractor.getStaticPropertyExtractor());
-    var dataInputStream = getDataFromEndpoint();
-
-    return extractor.selectedParser().getSampleData(dataInputStream);
+                                          IAdapterGuessSchemaContext adapterGuessSchemaContext)
+      throws AdapterException {
+    var config = toRequestConfig(extractor.getStaticPropertyExtractor());
+    return extractor.selectedParser().getSampleData(client.fetch(config));
   }
 
   @Override
-  public void pullData() throws RuntimeException {
-    var result = getDataFromEndpoint();
-    parser.parse(result, (event ->
-        collector.collect(event))
-    );
+  public void pullData() {
+    parser.parse(client.fetch(requestConfig), collector::collect);
   }
 
   @Override
@@ -184,36 +137,91 @@ public class HttpStreamProtocol implements StreamPipesAdapter, IPullAdapter {
     return pollingSettings;
   }
 
-  private List<HeaderConfiguration> getHeaderConfigurations(IStaticPropertyExtractor extractor) {
-    List<HeaderConfiguration> headers = new ArrayList<>();
-    var collection = extractor.getStaticPropertyByName(HEADER_COLLECTION);
-    if (!(collection instanceof CollectionStaticProperty csp)) {
-      return headers;
-    }
-    if (csp.getMembers() == null) {
-      return headers;
-    }
-    for (StaticProperty member : csp.getMembers()) {
-      if (!(member instanceof StaticPropertyGroup group)) {
-        continue;
-      }
-      var memberExtractor = StaticPropertyExtractor.from(group.getStaticProperties(), new ArrayList<>());
-      var headerKey = memberExtractor.textParameter(HEADER_KEY);
-      var headerValue = memberExtractor.textParameter(HEADER_VALUE);
-      if (headerKey != null && !headerKey.isBlank()) {
-        headers.add(new HeaderConfiguration(headerKey, headerValue));
-      }
-    }
-    return headers;
+  /**
+   * UI selection of the HTTP method. Methods with a body show content type and body fields.
+   */
+  public static StaticPropertyAlternatives httpMethodSelection() {
+    return StaticProperties.alternatives(
+        Labels.withId(HTTP_METHOD),
+        Arrays.stream(HttpMethod.values())
+            .map(HttpStreamProtocol::toAlternative)
+            .collect(Collectors.toList())
+    );
   }
 
-  private static class HeaderConfiguration {
-    private final String headerKey;
-    private final String headerValue;
+  static HttpRequestConfig toRequestConfig(IStaticPropertyExtractor extractor) throws AdapterException {
+    var url = extractor.singleValueParameter(URL_PROPERTY, String.class);
+    var method = HttpMethod.fromAlternativeId(extractor.selectedAlternativeInternalId(HTTP_METHOD));
+    var headers = extractHeaders(extractor);
 
-    private HeaderConfiguration(String headerKey, String headerValue) {
-      this.headerKey = headerKey;
-      this.headerValue = headerValue;
+    if (!method.hasBody()) {
+      return HttpRequestConfig.withoutBody(method, url, headers);
     }
+    try {
+      return HttpRequestConfig.withBody(
+          method,
+          url,
+          headers,
+          textOrEmpty(extractor, method.contentTypeId()),
+          textOrEmpty(extractor, method.requestBodyId())
+      );
+    } catch (IllegalArgumentException e) {
+      throw new AdapterException(e.getMessage(), e);
+    }
+  }
+
+  private static StaticPropertyAlternative toAlternative(HttpMethod method) {
+    var label = Labels.withId(method.alternativeId());
+    var selected = method == DEFAULT_METHOD;
+    return method.hasBody()
+        ? Alternatives.from(label, bodyOptions(method), selected)
+        : Alternatives.from(label, selected);
+  }
+
+  private static StaticPropertyGroup bodyOptions(HttpMethod method) {
+    var contentType = StaticProperties.stringFreeTextProperty(
+        Labels.withId(method.contentTypeId()),
+        HttpRequestConfig.DEFAULT_CONTENT_TYPE
+    );
+    var body = optionalText(method.requestBodyId());
+    body.setMultiLine(true);
+
+    return StaticProperties.group(Labels.withId(method.bodyOptionsId()), contentType, body);
+  }
+
+  private static CollectionStaticProperty headerCollection() {
+    return StaticProperties.collection(
+        Labels.withId(HEADER_COLLECTION),
+        false,
+        optionalText(HEADER_KEY),
+        optionalText(HEADER_VALUE)
+    );
+  }
+
+  private static FreeTextStaticProperty optionalText(String id) {
+    var property = StaticProperties.stringFreeTextProperty(Labels.withId(id), "");
+    property.setOptional(true);
+    return property;
+  }
+
+  private static List<HttpRequestConfig.Header> extractHeaders(IStaticPropertyExtractor extractor) {
+    var collection = extractor.getStaticPropertyByName(HEADER_COLLECTION, CollectionStaticProperty.class);
+    // members stay null until the user adds the first header
+    if (collection == null || collection.getMembers() == null) {
+      return List.of();
+    }
+    return collection.getMembers().stream()
+        .filter(StaticPropertyGroup.class::isInstance)
+        .map(member -> StaticPropertyExtractor.from(((StaticPropertyGroup) member).getStaticProperties()))
+        .filter(member -> !textOrEmpty(member, HEADER_KEY).isBlank())
+        .map(member -> new HttpRequestConfig.Header(
+            textOrEmpty(member, HEADER_KEY).trim(),
+            textOrEmpty(member, HEADER_VALUE)))
+        .toList();
+  }
+
+  private static String textOrEmpty(IStaticPropertyExtractor extractor, String id) {
+    var property = extractor.getStaticPropertyByName(id, FreeTextStaticProperty.class);
+    return property == null ? "" : Objects.requireNonNullElse(property.getValue(), "");
   }
 }

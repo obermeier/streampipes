@@ -25,6 +25,36 @@ url.description=Example: http(s)://test-server.com
 interval.title=Interval [sec]
 interval.description=Example: 5 (Polling interval in seconds)
 
+http-method.title=HTTP Method
+http-method.description=HTTP method used to request the endpoint
+
+http-method-get.title=GET
+http-method-get.description=Request the endpoint without a body
+
+http-method-post.title=POST
+http-method-post.description=Send a request body with every poll
+
+http-method-put.title=PUT
+http-method-put.description=Send a request body with every poll
+
+post-options.title=Request Body
+post-options.description=Content type and body of the POST request
+
+post-content-type.title=Content Type
+post-content-type.description=Example: application/json (UTF-8 is used if no charset is given)
+
+post-request-body.title=Body
+post-request-body.description=Example: {"query": "all"}
+
+put-options.title=Request Body
+put-options.description=Content type and body of the PUT request
+
+put-content-type.title=Content Type
+put-content-type.description=Example: application/json (UTF-8 is used if no charset is given)
+
+put-request-body.title=Body
+put-request-body.description=Example: {"query": "all"}
+
 header-collection.title=Request Headers
 header-collection.description=Optional custom headers to include with the request.
 
